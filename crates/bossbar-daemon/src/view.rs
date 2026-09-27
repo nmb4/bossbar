@@ -55,10 +55,14 @@ mod skin {
     use eframe::egui::Color32;
 
     /// Fully opaque: a near-opaque surface still ghosts high-contrast content
-    /// that sits behind the pill.
-    pub const PILL: Color32 = Color32::from_rgb(10, 10, 13);
-    pub const LINE: Color32 = Color32::from_rgba_premultiplied(20, 20, 20, 20);
-    pub const LINE_HOVER: Color32 = Color32::from_rgba_premultiplied(34, 34, 34, 34);
+    /// that sits behind the pill. A dark, neutral charcoal.
+    pub const PILL: Color32 = Color32::from_rgb(5, 5, 5);
+    /// Pill outline: nearly opaque but only a hair above [`PILL`] in value, so
+    /// it reads as a solid, very subtle line that lifts a little on hover.
+    pub const BORDER: Color32 = Color32::from_rgba_premultiplied(10, 10, 10, 240);
+    pub const BORDER_HOVER: Color32 = Color32::from_rgba_premultiplied(18, 18, 18, 240);
+    /// Hairline between tasks in the collapsed layout.
+    pub const DIVIDER: Color32 = Color32::from_rgba_premultiplied(34, 34, 34, 34);
     pub const TEXT: Color32 = Color32::from_rgb(0xf0, 0xf0, 0xf3);
     pub const TEXT_DIM: Color32 = Color32::from_rgb(0x9c, 0x9c, 0xa6);
     pub const TRACK: Color32 = Color32::from_rgba_premultiplied(30, 30, 30, 30);
@@ -70,6 +74,18 @@ mod skin {
 
 fn tint(color: Color32, factor: f32) -> Color32 {
     color.gamma_multiply(factor.clamp(0.0, 1.0))
+}
+
+/// Blends two premultiplied colors; `t = 0` keeps `from`, `t = 1` gives `to`.
+fn mix_color(from: Color32, to: Color32, t: f32) -> Color32 {
+    let t = t.clamp(0.0, 1.0);
+    let channel = |a: u8, b: u8| (a as f32 + (b as f32 - a as f32) * t).round() as u8;
+    Color32::from_rgba_premultiplied(
+        channel(from.r(), to.r()),
+        channel(from.g(), to.g()),
+        channel(from.b(), to.b()),
+        channel(from.a(), to.a()),
+    )
 }
 
 fn semibold(size: f32) -> FontId {
@@ -439,11 +455,13 @@ pub fn render_pill(
         };
         painter.add(Shape::from(shadow.as_shape(rect, radius)));
     }
-    let border = if pill_response.hovered() && !model.rows.is_empty() {
-        skin::LINE_HOVER
-    } else {
-        skin::LINE
-    };
+    // Barely-there outline that lifts a touch while the pointer is over the
+    // pill. The short fade keeps the change from reading as a flicker.
+    let hovered = pill_response.hovered() && !model.rows.is_empty();
+    let hover = ui
+        .ctx()
+        .animate_bool_with_time(ui.id().with("pill-hover"), hovered, 0.12);
+    let border = mix_color(skin::BORDER, skin::BORDER_HOVER, hover);
     painter.rect(
         rect,
         radius,
@@ -753,7 +771,7 @@ fn render_collapsed_normal(
                     Pos2::new(divider_x, center_y - 8.0),
                     Pos2::new(divider_x, center_y + 8.0),
                 ],
-                Stroke::new(1.0_f32, tint(skin::LINE_HOVER, appear)),
+                Stroke::new(1.0_f32, tint(skin::DIVIDER, appear)),
             );
             x = divider_x + 1.0 + plan.divider_gap;
         }
