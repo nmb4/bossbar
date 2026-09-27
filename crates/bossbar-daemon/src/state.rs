@@ -65,6 +65,10 @@ impl Daemon {
                 self.store.set_collapsed(*value);
                 Ok(WireResponse::ok())
             }
+            Request::SetCollapseMode { mode } => {
+                self.store.set_collapse_mode(*mode);
+                Ok(WireResponse::ok())
+            }
             Request::SetPosition { anchor } => {
                 self.store.set_anchor(*anchor);
                 self.push_event(UiEvent::Reposition);
@@ -115,7 +119,9 @@ impl Daemon {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bossbar_proto::{Anchor, BarInit, BarKind, BarPatch, BarState, BarStatus, Request};
+    use bossbar_proto::{
+        Anchor, BarInit, BarKind, BarPatch, BarState, BarStatus, CollapseMode, Request,
+    };
 
     fn create(daemon: &mut Daemon, label: &str) -> String {
         let response = daemon.apply(&Request::Create {
@@ -193,6 +199,16 @@ mod tests {
         assert!(response.ok);
         let state: BarState = daemon.apply(&Request::List).into_data().unwrap();
         assert_eq!(state.bars[0].tick, 2);
+    }
+
+    #[test]
+    fn collapse_mode_changes_apply() {
+        let mut daemon = Daemon::default();
+        let response = daemon.apply(&Request::SetCollapseMode {
+            mode: CollapseMode::Compact,
+        });
+        assert!(response.ok);
+        assert_eq!(daemon.store.snapshot().collapse_mode, CollapseMode::Compact);
     }
 
     #[test]

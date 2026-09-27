@@ -67,8 +67,13 @@ cargo run -p bossbar-daemon --example window_probe   # geometry check
 - Placement anchors the *pill*, not the window: the transparent shadow margin
   is allowed to extend past the screen edge so the visible surface is flush
   when padding is off. macOS reserves the menu bar and AppKit clamps the
-  window ~5 pt lower than requested at the very top; don't "fix" that by
-  moving the pill back down.
+  window ~5 pt lower than requested at the very top; `content_trim` then
+  lifts the pill inside the window by the measured difference so it still
+  touches the menu bar. Keep that compensation in `app.rs`, don't "fix" the
+  clamp by moving the pill back down.
+- Collapsed layout has two modes (`CollapseMode::Normal` / `Compact`), both
+  testable in `view.rs` snapshots. The whole pill toggles collapse on click;
+  per-bar controls must keep priority (they mark the click `consumed`).
 - Windows: transparency comes from a native rounded region
   (`platform::apply_window_region`), not per-pixel alpha. `SHADOW_MARGIN` is 0
   there; keep the pill rect equal to the window rect.

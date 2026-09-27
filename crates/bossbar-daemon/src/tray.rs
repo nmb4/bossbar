@@ -7,7 +7,7 @@
 use std::sync::mpsc::{self, Receiver};
 
 use anyhow::{Context as _, Result};
-use bossbar_proto::{Anchor, BarState};
+use bossbar_proto::{Anchor, BarState, CollapseMode};
 use tray_icon::{
     menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem},
     Icon, TrayIcon, TrayIconBuilder,
@@ -19,6 +19,8 @@ const SHOW_ID: &str = "bossbar.tray.show";
 const COLLAPSE_ID: &str = "bossbar.tray.collapse";
 const POS_CENTER_ID: &str = "bossbar.tray.position.center";
 const POS_RIGHT_ID: &str = "bossbar.tray.position.right";
+const MODE_NORMAL_ID: &str = "bossbar.tray.collapse-mode.normal";
+const MODE_COMPACT_ID: &str = "bossbar.tray.collapse-mode.compact";
 const PADDING_ID: &str = "bossbar.tray.padding";
 const CLEAR_ID: &str = "bossbar.tray.clear";
 const QUIT_ID: &str = "bossbar.tray.quit";
@@ -29,6 +31,7 @@ pub enum TrayAction {
     ToggleVisible,
     ToggleCollapse,
     SetAnchor(Anchor),
+    SetCollapseMode(CollapseMode),
     TogglePadding,
     ClearAll,
     Quit,
@@ -43,6 +46,8 @@ pub struct TrayController {
     collapse_item: CheckMenuItem,
     pos_center_item: CheckMenuItem,
     pos_right_item: CheckMenuItem,
+    mode_normal_item: CheckMenuItem,
+    mode_compact_item: CheckMenuItem,
     padding_item: CheckMenuItem,
 }
 
@@ -75,6 +80,27 @@ impl TrayController {
             &[&pos_center_item, &pos_right_item],
         )
         .context("build tray position submenu")?;
+        let mode_normal_item = CheckMenuItem::with_id(
+            MODE_NORMAL_ID,
+            CollapseMode::Normal.label(),
+            true,
+            initial.collapse_mode == CollapseMode::Normal,
+            None,
+        );
+        let mode_compact_item = CheckMenuItem::with_id(
+            MODE_COMPACT_ID,
+            CollapseMode::Compact.label(),
+            true,
+            initial.collapse_mode == CollapseMode::Compact,
+            None,
+        );
+        let mode_root = tray_icon::menu::Submenu::with_id_and_items(
+            "bossbar.tray.collapse-mode",
+            "Collapse style",
+            true,
+            &[&mode_normal_item, &mode_compact_item],
+        )
+        .context("build tray collapse style submenu")?;
         let padding_item =
             CheckMenuItem::with_id(PADDING_ID, "Extra padding", true, initial.padding, None);
         let clear_item = MenuItem::with_id(CLEAR_ID, "Clear all bars", true, None);
@@ -82,6 +108,7 @@ impl TrayController {
         menu.append_items(&[
             &show_item,
             &collapse_item,
+            &mode_root,
             &position_root,
             &padding_item,
             &PredefinedMenuItem::separator(),
@@ -113,6 +140,8 @@ impl TrayController {
                 COLLAPSE_ID => Some(TrayAction::ToggleCollapse),
                 POS_CENTER_ID => Some(TrayAction::SetAnchor(Anchor::TopCenter)),
                 POS_RIGHT_ID => Some(TrayAction::SetAnchor(Anchor::TopRight)),
+                MODE_NORMAL_ID => Some(TrayAction::SetCollapseMode(CollapseMode::Normal)),
+                MODE_COMPACT_ID => Some(TrayAction::SetCollapseMode(CollapseMode::Compact)),
                 PADDING_ID => Some(TrayAction::TogglePadding),
                 CLEAR_ID => Some(TrayAction::ClearAll),
                 QUIT_ID => Some(TrayAction::Quit),
@@ -132,6 +161,8 @@ impl TrayController {
             collapse_item,
             pos_center_item,
             pos_right_item,
+            mode_normal_item,
+            mode_compact_item,
             padding_item,
         })
     }
@@ -148,6 +179,14 @@ impl TrayController {
         set_checked(&self.collapse_item, collapse);
         set_checked(&self.pos_center_item, state.anchor == Anchor::TopCenter);
         set_checked(&self.pos_right_item, state.anchor == Anchor::TopRight);
+        set_checked(
+            &self.mode_normal_item,
+            state.collapse_mode == CollapseMode::Normal,
+        );
+        set_checked(
+            &self.mode_compact_item,
+            state.collapse_mode == CollapseMode::Compact,
+        );
         set_checked(&self.padding_item, state.padding);
     }
 }

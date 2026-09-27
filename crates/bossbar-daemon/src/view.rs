@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use bossbar_proto::{BarKind, BarStatus, Request};
+use bossbar_proto::{BarKind, BarStatus, CollapseMode, Request};
 use eframe::egui::{
     self, epaint::Shadow, Align2, Color32, CornerRadius, FontFamily, FontId, Pos2, Rect, Sense,
     Shape, Stroke, StrokeKind, Vec2,
@@ -22,23 +22,29 @@ pub const PILL_WIDTH: f32 = 340.0;
 pub const INITIAL_PILL_SIZE: [f32; 2] = [PILL_WIDTH, COLLAPSED_HEIGHT];
 const COLLAPSED_HEIGHT: f32 = 40.0;
 const COLLAPSED_PAD_X: f32 = 15.0;
+const COLLAPSED_MIN_WIDTH: f32 = 150.0;
+const COLLAPSED_MAX_WIDTH: f32 = 440.0;
+/// Ring drawn next to each task in the collapsed normal layout.
+const TASK_RING_D: f32 = 14.0;
+/// Single shared ring in the collapsed compact layout.
+const COMPACT_RING_D: f32 = 18.0;
+const RING_GAP: f32 = 6.0;
+const TASK_PAD_X: f32 = 10.0;
+const DIVIDER_GAP: f32 = 9.0;
+const DIVIDER_MIN_GAP: f32 = 3.0;
 const PAD_X: f32 = 15.0;
 const PAD_Y: f32 = 12.0;
 const ROW_LABEL_H: f32 = 17.0;
 const ROW_DETAIL_H: f32 = 15.0;
 const ROW_INNER_GAP: f32 = 4.0;
 const ROW_GAP: f32 = 12.0;
-const HEADER_H: f32 = 16.0;
-const HEADER_GAP: f32 = 9.0;
 const BAR_H: f32 = 5.0;
 /// Capsule radius cap; small pills use half their height instead.
 const MAX_RADIUS: f32 = 26.0;
 /// Transparent band around the pill used for the drop shadow. Windows is
 /// trimmed to the pill itself with a shaped region instead.
 pub const SHADOW_MARGIN: f32 = if cfg!(windows) { 0.0 } else { 10.0 };
-const SPINNER_D: f32 = 18.0;
 const SPINNER_STROKE: f32 = 2.2;
-const CHEVRON_SIZE: f32 = 20.0;
 
 /// Alcove-inspired dark surface.
 mod skin {
@@ -48,6 +54,7 @@ mod skin {
     /// that sits behind the pill.
     pub const PILL: Color32 = Color32::from_rgb(10, 10, 13);
     pub const LINE: Color32 = Color32::from_rgba_premultiplied(20, 20, 20, 20);
+    pub const LINE_HOVER: Color32 = Color32::from_rgba_premultiplied(34, 34, 34, 34);
     pub const TEXT: Color32 = Color32::from_rgb(0xf0, 0xf0, 0xf3);
     pub const TEXT_DIM: Color32 = Color32::from_rgb(0x9c, 0x9c, 0xa6);
     pub const TRACK: Color32 = Color32::from_rgba_premultiplied(30, 30, 30, 30);
@@ -134,6 +141,7 @@ pub struct UiModel {
     pub rows: Vec<RowModel>,
     pub live_count: usize,
     pub collapsed: bool,
+    pub collapse_mode: CollapseMode,
     pub visible: bool,
     pub aggregate: Option<f32>,
 }
@@ -166,17 +174,19 @@ impl UiModel {
             rows,
             live_count: store.live_count(),
             collapsed: store.collapsed,
+            collapse_mode: store.collapse_mode,
             visible: store.visible,
             aggregate: store.aggregate(),
         }
     }
 
-    /// True when the pill shows a single compact line with a progress ring.
-    pub fn uses_spinner(&self) -> bool {
+    /// True when the pill shows the collapsed layout instead of rows.
+    pub fn uses_collapsed_layout(&self) -> bool {
         self.collapsed && self.live_count >= 2
     }
 
-    pub fn state_dot(&self) -> Color32 {
+    /// Aggregate status color, used by the compact ring.
+    pub fn status_color(&self) -> Color32 {
         if self.rows.iter().any(|row| row.status == BarStatus::Failed) {
             skin::ERR
         } else if self.live_count > 0
@@ -196,18 +206,13 @@ impl UiModel {
 /// Natural size of the pill, in points. `current` is returned when there is
 /// nothing to show (so the window keeps its last size while fading out).
 pub fn target_size(ctx: &egui::Context, model: &UiModel, current: Vec2) -> Vec2 {
-    if model.uses_spinner() {
+    if model.uses_collapsed_layout() {
         return collapsed_size(ctx, model);
     }
     if model.rows.is_empty() {
         return current;
     }
 
-    let header = if model.live_count >= 2 {
-        HEADER_H + HEADER_GAP
-    } else {
-        0.0
-    };
     let mut rows_height = 0.0;
     for (index, row) in model.rows.iter().enumerate() {
         if index > 0 {
@@ -222,31 +227,123 @@ pub fn target_size(ctx: &egui::Context, model: &UiModel, current: Vec2) -> Vec2 
             rows_height += 3.0 + ROW_DETAIL_H;
         }
     }
-    Vec2::new(PILL_WIDTH, (PAD_Y * 2.0 + header + rows_height).round())
+    Vec2::new(PILL_WIDTH, (PAD_Y * 2.0 + rows_height).round())
 }
 
 fn collapsed_size(ctx: &egui::Context, model: &UiModel) -> Vec2 {
-    let text = format!("{} tasks", model.live_count);
-    let value = model
-        .aggregate
-        .map(|fraction| format!("{:.0}%", fraction * 100.0));
-    let text_width = measure(ctx, &text, semibold(12.5));
-    let value_width = value
-        .as_deref()
-        .map(|value| measure(ctx, value, medium(12.0)))
-        .unwrap_or(0.0);
-    let width = COLLAPSED_PAD_X * 2.0
-        + SPINNER_D
-        + 9.0
-        + text_width
-        + if value_width > 0.0 {
-            8.0 + value_width
-        } else {
-            0.0
+    match model.collapse_mode {
+        CollapseMode::Compact => {
+            let text = format!("{} tasks", model.live_count);
+            let text_width = measure(ctx, &text, semibold(12.5));
+            let value_width = model
+                .aggregate
+                .map(|fraction| format!("{:.0}%", fraction * 100.0))
+                .map(|value| measure(ctx, &value, medium(12.0)))
+                .unwrap_or(0.0);
+            let width = COLLAPSED_PAD_X * 2.0
+                + COMPACT_RING_D
+                + 9.0
+                + text_width
+                + if value_width > 0.0 {
+                    8.0 + value_width
+                } else {
+                    0.0
+                };
+            Vec2::new(
+                width.clamp(COLLAPSED_MIN_WIDTH, PILL_WIDTH).round(),
+                COLLAPSED_HEIGHT,
+            )
         }
-        + 6.0
-        + CHEVRON_SIZE;
-    Vec2::new(width.clamp(150.0, PILL_WIDTH).round(), COLLAPSED_HEIGHT)
+        CollapseMode::Normal => {
+            let plan = normal_plan(ctx, model);
+            Vec2::new(
+                plan.width.clamp(COLLAPSED_MIN_WIDTH, COLLAPSED_MAX_WIDTH),
+                COLLAPSED_HEIGHT,
+            )
+        }
+    }
+}
+
+/// Collapsed-normal layout: one ring per task plus an optional elided label.
+struct NormalTask {
+    label_max: Option<f32>,
+}
+
+struct NormalPlan {
+    tasks: Vec<NormalTask>,
+    /// Padding after each task's content.
+    pad: f32,
+    /// Space on each side of the divider between tasks.
+    divider_gap: f32,
+    task_ring: f32,
+    width: f32,
+}
+
+fn normal_plan(ctx: &egui::Context, model: &UiModel) -> NormalPlan {
+    let tasks = model.rows.len().max(1);
+    let ring = TASK_RING_D;
+    let budget = COLLAPSED_MAX_WIDTH - COLLAPSED_PAD_X * 2.0;
+    let label_widths: Vec<f32> = model
+        .rows
+        .iter()
+        .map(|row| measure(ctx, &row.label, medium(12.0)))
+        .collect();
+
+    let mut plan = NormalPlan {
+        tasks: Vec::with_capacity(tasks),
+        pad: TASK_PAD_X,
+        divider_gap: DIVIDER_GAP,
+        task_ring: ring,
+        width: 0.0,
+    };
+
+    let dividers = (tasks.saturating_sub(1)) as f32 * (plan.divider_gap * 2.0 + 1.0);
+    let fixed = tasks as f32 * (ring + RING_GAP + plan.pad * 2.0);
+    let labels_total: f32 = label_widths.iter().sum();
+    if fixed + dividers + labels_total <= budget {
+        // Everything fits with full labels.
+        plan.tasks = label_widths
+            .iter()
+            .map(|width| NormalTask {
+                label_max: Some(*width),
+            })
+            .collect();
+        plan.width = COLLAPSED_PAD_X * 2.0 + fixed + dividers + labels_total;
+        return plan;
+    }
+
+    // Try elided labels.
+    let per_label = (budget - fixed - dividers) / tasks as f32;
+    if per_label >= 22.0 {
+        plan.tasks = (0..tasks)
+            .map(|_| NormalTask {
+                label_max: Some(per_label),
+            })
+            .collect();
+        plan.width = COLLAPSED_MAX_WIDTH;
+        return plan;
+    }
+
+    // Rings only, shrinking padding and divider gaps until it fits.
+    plan.tasks = (0..tasks).map(|_| NormalTask { label_max: None }).collect();
+    loop {
+        let fixed = tasks as f32 * (ring + plan.pad * 2.0);
+        let dividers = (tasks.saturating_sub(1)) as f32 * (plan.divider_gap * 2.0 + 1.0);
+        let total = COLLAPSED_PAD_X * 2.0 + fixed + dividers;
+        if total <= COLLAPSED_MAX_WIDTH {
+            plan.width = total;
+            break;
+        }
+        if plan.divider_gap > DIVIDER_MIN_GAP {
+            plan.divider_gap -= 1.0;
+        } else if plan.pad > 3.0 {
+            plan.pad -= 1.0;
+        } else {
+            plan.width = COLLAPSED_MAX_WIDTH;
+            break;
+        }
+    }
+    plan
 }
 
 pub fn pill_radius(pill_size: Vec2) -> f32 {
@@ -256,17 +353,22 @@ pub fn pill_radius(pill_size: Vec2) -> f32 {
 // -- painting ----------------------------------------------------------------
 
 /// Draws the pill at `pill_size` inside the current UI, offset by the shadow
-/// margin. `actions` receives requests produced by clicks.
+/// margin (`content_trim` lifts it when the OS refused to place the window
+/// all the way at the screen top). `actions` receives requests from clicks.
 pub fn render_pill(
     ui: &mut egui::Ui,
     model: &UiModel,
     pill_size: Vec2,
+    content_trim: f32,
     appear: f32,
     spinner_phase: f32,
     actions: &mut dyn FnMut(Request),
 ) {
     let margin = SHADOW_MARGIN;
-    let rect = Rect::from_min_size(Pos2::new(margin, margin), pill_size);
+    let rect = Rect::from_min_size(
+        Pos2::new(margin, margin - content_trim.clamp(0.0, margin)),
+        pill_size,
+    );
     let radius = pill_radius(pill_size);
     let mut consumed = false;
     let pill_response = ui.interact(rect, ui.id().with("pill-body"), Sense::click());
@@ -281,25 +383,28 @@ pub fn render_pill(
         };
         painter.add(Shape::from(shadow.as_shape(rect, radius)));
     }
+    let border = if pill_response.hovered() && model.live_count >= 2 {
+        skin::LINE_HOVER
+    } else {
+        skin::LINE
+    };
     painter.rect(
         rect,
         radius,
         tint(skin::PILL, appear),
-        Stroke::new(1.0_f32, tint(skin::LINE, appear)),
+        Stroke::new(1.0_f32, tint(border, appear)),
         StrokeKind::Inside,
     );
 
-    if model.uses_spinner() {
-        render_collapsed(
-            ui,
-            &painter,
-            rect,
-            model,
-            appear,
-            spinner_phase,
-            actions,
-            &mut consumed,
-        );
+    if model.uses_collapsed_layout() {
+        match model.collapse_mode {
+            CollapseMode::Compact => {
+                render_collapsed_compact(ui, &painter, rect, model, appear, spinner_phase);
+            }
+            CollapseMode::Normal => {
+                render_collapsed_normal(ui, &painter, rect, model, appear, spinner_phase);
+            }
+        }
     } else {
         render_expanded(
             ui,
@@ -313,6 +418,7 @@ pub fn render_pill(
         );
     }
 
+    // The whole pill toggles the collapsed layout; bar controls take priority.
     if pill_response.clicked() && !consumed && model.live_count >= 2 {
         actions(Request::Collapse { value: None });
     }
@@ -331,15 +437,6 @@ fn render_expanded(
 ) {
     let content = rect.shrink2(Vec2::new(PAD_X, PAD_Y));
     let mut y = content.top();
-
-    if model.live_count >= 2 {
-        let header = Rect::from_min_size(
-            Pos2::new(content.left(), y),
-            Vec2::new(content.width(), HEADER_H),
-        );
-        render_header(ui, painter, header, model, appear, actions, consumed);
-        y += HEADER_H + HEADER_GAP;
-    }
 
     for (index, row) in model.rows.iter().enumerate() {
         if index > 0 {
@@ -369,70 +466,6 @@ fn render_expanded(
     }
 }
 
-fn render_header(
-    ui: &egui::Ui,
-    painter: &egui::Painter,
-    header: Rect,
-    model: &UiModel,
-    appear: f32,
-    actions: &mut dyn FnMut(Request),
-    consumed: &mut bool,
-) {
-    let center_y = header.center().y;
-    painter.circle_filled(
-        Pos2::new(header.left() + 3.0, center_y),
-        3.0,
-        tint(model.state_dot(), appear),
-    );
-    painter.text(
-        Pos2::new(header.left() + 13.0, center_y),
-        Align2::LEFT_CENTER,
-        format!("{} TASKS", model.live_count),
-        medium(9.5),
-        tint(skin::TEXT_DIM, appear),
-    );
-
-    let chevron = Rect::from_center_size(
-        Pos2::new(header.right() - CHEVRON_SIZE / 2.0, center_y),
-        Vec2::splat(CHEVRON_SIZE),
-    );
-    let response = ui.interact(chevron, ui.id().with("header-chevron"), Sense::click());
-    if response.hovered() {
-        painter.rect_filled(chevron, CornerRadius::same(7), tint(skin::HOVER, appear));
-    }
-    paint_chevron(
-        painter,
-        chevron.center(),
-        4.5,
-        true,
-        Stroke::new(
-            1.5_f32,
-            tint(
-                if response.hovered() {
-                    skin::TEXT
-                } else {
-                    skin::TEXT_DIM
-                },
-                appear,
-            ),
-        ),
-    );
-    if response.clicked() {
-        *consumed = true;
-        actions(Request::Collapse { value: None });
-    }
-
-    if let Some(fraction) = model.aggregate {
-        painter.text(
-            Pos2::new(chevron.left() - 4.0, center_y),
-            Align2::RIGHT_CENTER,
-            format!("{:.0}%", fraction * 100.0),
-            medium(11.0),
-            tint(skin::TEXT_DIM, appear),
-        );
-    }
-}
-
 #[allow(clippy::too_many_arguments)]
 fn render_row(
     ui: &egui::Ui,
@@ -449,21 +482,13 @@ fn render_row(
     let label_center_y = row_rect.top() + ROW_LABEL_H / 2.0;
     let hovered = row_alpha > 0.5 && ui.rect_contains_pointer(row_rect);
 
-    painter.circle_filled(
-        Pos2::new(row_rect.left() + 3.0, label_center_y),
-        3.0,
-        tint(row.color, row_alpha),
-    );
-
     let close_width = if hovered { 20.0 } else { 0.0 };
     let value_width = if row.value_text.is_empty() {
         0.0
     } else {
         measure(ctx, &row.value_text, medium(12.0))
     };
-    let label_left = row_rect.left() + 13.0;
-    let label_max_width =
-        (row_rect.right() - label_left - value_width - 8.0 - close_width).max(24.0);
+    let label_max_width = (row_rect.width() - value_width - 8.0 - close_width).max(24.0);
     let galley = elide(
         ctx,
         &row.label,
@@ -472,7 +497,7 @@ fn render_row(
         label_max_width,
     );
     painter.galley(
-        Pos2::new(label_left, label_center_y - galley.size().y / 2.0),
+        Pos2::new(row_rect.left(), label_center_y - galley.size().y / 2.0),
         galley,
         tint(skin::TEXT, row_alpha),
     );
@@ -564,79 +589,141 @@ fn render_row(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn render_collapsed(
+fn render_collapsed_compact(
+    _ui: &egui::Ui,
+    painter: &egui::Painter,
+    rect: Rect,
+    model: &UiModel,
+    appear: f32,
+    spinner_phase: f32,
+) {
+    let center_y = rect.center().y;
+    let text = format!("{} tasks", model.live_count);
+    let text_width = measure(_ui.ctx(), &text, semibold(12.5));
+    let value = model
+        .aggregate
+        .map(|fraction| format!("{:.0}%", fraction * 100.0));
+    let value_width = value
+        .as_deref()
+        .map(|value| measure(_ui.ctx(), value, medium(12.0)))
+        .unwrap_or(0.0);
+    let total = COMPACT_RING_D
+        + 9.0
+        + text_width
+        + if value_width > 0.0 {
+            8.0 + value_width
+        } else {
+            0.0
+        };
+    let start_x = rect.center().x - total / 2.0;
+
+    paint_ring(
+        painter,
+        Pos2::new(start_x + COMPACT_RING_D / 2.0, center_y),
+        COMPACT_RING_D / 2.0 - SPINNER_STROKE / 2.0,
+        SPINNER_STROKE,
+        model.aggregate,
+        spinner_phase,
+        tint(model.status_color(), appear),
+        tint(skin::TRACK, appear),
+    );
+    painter.text(
+        Pos2::new(start_x + COMPACT_RING_D + 9.0, center_y),
+        Align2::LEFT_CENTER,
+        text,
+        semibold(12.5),
+        tint(skin::TEXT, appear),
+    );
+    if let Some(value) = value {
+        painter.text(
+            Pos2::new(start_x + total, center_y),
+            Align2::RIGHT_CENTER,
+            value,
+            medium(12.0),
+            tint(skin::TEXT_DIM, appear),
+        );
+    }
+}
+
+fn render_collapsed_normal(
     ui: &egui::Ui,
     painter: &egui::Painter,
     rect: Rect,
     model: &UiModel,
     appear: f32,
     spinner_phase: f32,
-    actions: &mut dyn FnMut(Request),
-    consumed: &mut bool,
 ) {
+    let ctx = ui.ctx();
+    let plan = normal_plan(ctx, model);
     let center_y = rect.center().y;
-    let spinner_center = Pos2::new(rect.left() + COLLAPSED_PAD_X + SPINNER_D / 2.0, center_y);
-    paint_ring(
-        painter,
-        spinner_center,
-        SPINNER_D / 2.0 - SPINNER_STROKE / 2.0,
-        SPINNER_STROKE,
-        model.aggregate,
-        spinner_phase,
-        tint(skin::ACCENT, appear),
-        tint(skin::TRACK, appear),
-    );
 
-    painter.text(
-        Pos2::new(spinner_center.x + SPINNER_D / 2.0 + 9.0, center_y),
-        Align2::LEFT_CENTER,
-        format!("{} tasks", model.live_count),
-        semibold(12.5),
-        tint(skin::TEXT, appear),
-    );
+    // Measure the actual content first so the row can be centered.
+    let galleys: Vec<Option<Arc<egui::Galley>>> = model
+        .rows
+        .iter()
+        .zip(&plan.tasks)
+        .map(|(row, task)| {
+            task.label_max.map(|max_width| {
+                elide(
+                    ctx,
+                    &row.label,
+                    medium(12.0),
+                    tint(skin::TEXT, appear * row.alpha.max(0.2)),
+                    max_width,
+                )
+            })
+        })
+        .collect();
 
-    let chevron = Rect::from_center_size(
-        Pos2::new(
-            rect.right() - COLLAPSED_PAD_X - CHEVRON_SIZE / 2.0,
-            center_y,
-        ),
-        Vec2::splat(CHEVRON_SIZE),
-    );
-    let response = ui.interact(chevron, ui.id().with("collapsed-chevron"), Sense::click());
-    if response.hovered() {
-        painter.rect_filled(chevron, CornerRadius::same(7), tint(skin::HOVER, appear));
-    }
-    paint_chevron(
-        painter,
-        chevron.center(),
-        4.5,
-        false,
-        Stroke::new(
-            1.5_f32,
-            tint(
-                if response.hovered() {
-                    skin::TEXT
-                } else {
-                    skin::TEXT_DIM
-                },
-                appear,
-            ),
-        ),
-    );
-    if response.clicked() {
-        *consumed = true;
-        actions(Request::Collapse { value: None });
+    let mut total = 0.0;
+    for (index, row) in model.rows.iter().enumerate() {
+        if index > 0 {
+            total += plan.divider_gap * 2.0 + 1.0;
+        }
+        total += plan.task_ring + plan.pad * 2.0;
+        total += galleys[index]
+            .as_ref()
+            .map(|galley| RING_GAP + galley.size().x)
+            .unwrap_or(0.0);
+        let _ = row;
     }
 
-    if let Some(fraction) = model.aggregate {
-        painter.text(
-            Pos2::new(chevron.left() - 4.0, center_y),
-            Align2::RIGHT_CENTER,
-            format!("{:.0}%", fraction * 100.0),
-            medium(12.0),
-            tint(skin::TEXT_DIM, appear),
+    let mut x = rect.center().x - total / 2.0;
+    for (index, row) in model.rows.iter().enumerate() {
+        if index > 0 {
+            let divider_x = x + plan.divider_gap;
+            painter.line_segment(
+                [
+                    Pos2::new(divider_x, center_y - 8.0),
+                    Pos2::new(divider_x, center_y + 8.0),
+                ],
+                Stroke::new(1.0_f32, tint(skin::LINE_HOVER, appear)),
+            );
+            x = divider_x + 1.0 + plan.divider_gap;
+        }
+        let row_alpha = appear * row.alpha;
+        let fraction = (!matches!(row.kind, BarKind::Indeterminate)).then_some(row.display);
+        paint_ring(
+            painter,
+            Pos2::new(x + plan.pad + plan.task_ring / 2.0, center_y),
+            plan.task_ring / 2.0 - SPINNER_STROKE / 2.0,
+            SPINNER_STROKE,
+            fraction,
+            spinner_phase,
+            tint(row.color, row_alpha),
+            tint(skin::TRACK, row_alpha),
         );
+        x += plan.pad + plan.task_ring;
+        if let Some(galley) = &galleys[index] {
+            x += RING_GAP;
+            painter.galley(
+                Pos2::new(x, center_y - galley.size().y / 2.0),
+                galley.clone(),
+                tint(skin::TEXT, row_alpha),
+            );
+            x += galley.size().x;
+        }
+        x += plan.pad;
     }
 }
 
@@ -751,15 +838,6 @@ fn paint_ring(
     painter.circle_filled(*points.last().unwrap(), stroke_width / 2.0, color);
 }
 
-fn paint_chevron(painter: &egui::Painter, center: Pos2, half: f32, up: bool, stroke: Stroke) {
-    let direction = if up { -1.0 } else { 1.0 };
-    let left = center + Vec2::new(-half, -direction * half * 0.55);
-    let middle = center + Vec2::new(0.0, direction * half * 0.55);
-    let right = center + Vec2::new(half, -direction * half * 0.55);
-    painter.line_segment([left, middle], stroke);
-    painter.line_segment([middle, right], stroke);
-}
-
 fn paint_close(painter: &egui::Painter, center: Pos2, radius: f32, stroke: Stroke) {
     painter.line_segment(
         [
@@ -826,7 +904,7 @@ mod tests {
                                 0.0,
                                 egui::Color32::from_rgb(0x24, 0x26, 0x2b),
                             );
-                            render_pill(ui, &model, pill_size, 1.0, 0.35, &mut |_request| {});
+                            render_pill(ui, &model, pill_size, 0.0, 1.0, 0.35, &mut |_request| {});
                         });
                 },
                 (false, model, pill_size),
@@ -909,10 +987,9 @@ mod tests {
         snapshot("expanded-multi", &settled(&mut store));
     }
 
-    #[test]
-    fn collapsed_single_line() {
+    fn three_tasks() -> BarStore {
         let mut store = BarStore::default();
-        for (index, (label, color)) in [("Build", "blue"), ("Test", "cyan"), ("Lint", "green")]
+        for (index, (label, color)) in [("Build", "blue"), ("Test", "cyan"), ("Deploy", "green")]
             .into_iter()
             .enumerate()
         {
@@ -935,8 +1012,44 @@ mod tests {
                 )
                 .unwrap();
         }
+        store
+    }
+
+    #[test]
+    fn collapsed_normal_shows_a_ring_per_task() {
+        let mut store = three_tasks();
         store.set_collapsed(Some(true));
-        snapshot("collapsed", &settled(&mut store));
+        assert_eq!(store.collapse_mode, CollapseMode::Normal);
+        snapshot("collapsed-normal", &settled(&mut store));
+    }
+
+    #[test]
+    fn collapsed_compact_shows_one_ring() {
+        let mut store = three_tasks();
+        store.set_collapsed(Some(true));
+        store.set_collapse_mode(CollapseMode::Compact);
+        snapshot("collapsed-compact", &settled(&mut store));
+    }
+
+    #[test]
+    fn collapsed_normal_elides_many_labels() {
+        let mut store = BarStore::default();
+        for index in 0..8 {
+            let id = store
+                .create(None, BarInit::new(format!("Long task name number {index}")))
+                .unwrap();
+            store
+                .update(
+                    &id,
+                    BarPatch {
+                        percent: Some(10.0 * index as f64),
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+        }
+        store.set_collapsed(Some(true));
+        snapshot("collapsed-many", &settled(&mut store));
     }
 
     #[test]

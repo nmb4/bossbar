@@ -74,6 +74,10 @@ pub fn primary_monitor() -> Option<MonitorInfo> {
 /// With `padding` disabled the pill sits flush against the usable screen
 /// bounds (the very top edge on Windows/Linux, just below the menu bar on
 /// macOS); enabling it adds [`EXTRA_PADDING_POINTS`] of breathing room.
+///
+/// Returns the logical position that was requested. macOS may refuse to put a
+/// window all the way against the top of the screen; callers compare the
+/// requested origin against the window's actual one to compensate.
 pub fn place_window(
     ctx: &egui::Context,
     monitor: MonitorInfo,
@@ -81,7 +85,7 @@ pub fn place_window(
     pill_size: Vec2,
     margin: f32,
     padding: bool,
-) {
+) -> Pos2 {
     let (x_units, y_units) = window_origin_units(&monitor, anchor, pill_size, margin, padding);
 
     // winit logical positions: points on macOS, points = physical / window
@@ -93,6 +97,7 @@ pub fn place_window(
         Pos2::new(x_units / window_scale, y_units / window_scale)
     };
     ctx.send_viewport_cmd(ViewportCommand::OuterPosition(logical));
+    logical
 }
 
 /// Window origin in monitor units for the given pill placement.

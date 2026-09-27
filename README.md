@@ -5,27 +5,28 @@ daemon you (or an agent) talk to from the CLI.
 
 ```
 ┌──────────────────────────────────┐
-│  ● 3 TASKS                  36% ⌃│
-│  ● Building wire-app        38%  │
+│  Building wire-app          38%  │
 │  ▓▓▓▓▓▓▓▓▓░░░░░░░░░░░░░░░░░░░░░░ │
 │  cargo build --release · 214 crates
-│  ● Compiling bossbar         7/20│
+│  Compiling bossbar           7/20│
 │  ▓▓▓▓▓▓▓░░░░░░░░░░░░░░░░░░░░░░░░ │
-│  ● Waiting for device            │
+│  Waiting for device              │
 │  ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓░░░░░░░░░░░░░░░░ │
 └──────────────────────────────────┘
 ```
 
 - A frameless, always-on-top **pill** anchored top-center or top-right of the
   **active screen** (the monitor your cursor is on). Dark Alcove-style surface,
-  all bars and labels in one pill. Flush with the screen bounds by default;
-  `bossbar padding on` adds breathing room (on macOS the pill always stays
-  below the menu bar).
+  all bars and labels in one pill. Flush with the screen bounds by default
+  (on macOS: directly under the menu bar); `bossbar padding on` adds breathing
+  room.
 - **Minecraft-style boss bars**: `--ticks 20` splits the bar into segments and
   `--tick N` advances them.
-- **Collapse toggle**: with more than one bar, squeeze the pill into a single
-  line with a progress ring (aggregate percentage for determinate bars, a
-  spinning arc otherwise).
+- **Collapse toggle**: click anywhere on the pill (the per-bar ✕ keeps
+  priority) to squeeze it into a single line. Two styles, `bossbar
+  collapse-mode normal|compact`: **normal** (default) shows one progress ring
+  per task, divided by hairlines; **compact** shows a single shared ring with
+  the task count and aggregate percentage. Also available from the tray.
 - **GUI-less daemon**: no Dock icon, no main window, a tray icon only. 0% CPU
   while idle or when the pill is static; the window is created/hidden on
   demand.
@@ -83,8 +84,9 @@ bossbar (CLI) ──loopback TCP + token──▶ bossbar-daemon (eframe/wgpu)
 - On macOS the daemon runs as an accessory app (no Dock icon) and its window is
   created non-activating, so it never steals focus. On Windows the window is
   trimmed to the pill with a native region, so no per-pixel alpha is needed.
-- Tray menu: show/hide bars, collapse/expand, position, extra padding, clear
-  all, quit. Left- and right-clicking the tray icon both open the menu.
+- Tray menu: show/hide bars, collapse/expand, collapse style, position, extra
+  padding, clear all, quit. Left- and right-clicking the tray icon both open
+  the menu.
 
 ## CLI reference (short)
 
@@ -99,6 +101,7 @@ bossbar (CLI) ──loopback TCP + token──▶ bossbar-daemon (eframe/wgpu)
 | `bossbar list [--json]` | Current state |
 | `bossbar wait <id> [--timeout 30m]` | Block until the bar disappears (exit 1 if it failed, 2 on timeout) |
 | `bossbar collapse [on\|off\|toggle]` | Collapse the pill |
+| `bossbar collapse-mode <normal\|compact>` | Style used while collapsed |
 | `bossbar position <top-center\|top-right>` | Anchor on the active screen |
 | `bossbar padding [on\|off\|toggle]` | `off` (default) = flush with the screen bounds, `on` = 12 pt of breathing room |
 | `bossbar visible [on\|off\|toggle]` | Show/hide without touching bars |

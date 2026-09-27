@@ -56,6 +56,49 @@ impl std::fmt::Display for Anchor {
     }
 }
 
+/// Layout used while the pill is collapsed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum CollapseMode {
+    /// One progress ring per task in a single row, divided by hairlines.
+    #[default]
+    Normal,
+    /// A single shared ring with the task count and aggregate percentage.
+    Compact,
+}
+
+impl CollapseMode {
+    pub const ALL: [Self; 2] = [Self::Normal, Self::Compact];
+
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Normal => "normal",
+            Self::Compact => "compact",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Normal => "Normal",
+            Self::Compact => "Compact",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "normal" => Some(Self::Normal),
+            "compact" => Some(Self::Compact),
+            _ => None,
+        }
+    }
+}
+
+impl std::fmt::Display for CollapseMode {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.id())
+    }
+}
+
 /// How a bar expresses progress.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
@@ -183,6 +226,9 @@ impl BarSnapshot {
 pub struct BarState {
     pub bars: Vec<BarSnapshot>,
     pub collapsed: bool,
+    /// Layout used while collapsed.
+    #[serde(default)]
+    pub collapse_mode: CollapseMode,
     pub anchor: Anchor,
     pub visible: bool,
     /// `false` (default) keeps the pill flush with the screen bounds;
@@ -196,6 +242,7 @@ impl Default for BarState {
         Self {
             bars: Vec::new(),
             collapsed: false,
+            collapse_mode: CollapseMode::default(),
             anchor: Anchor::default(),
             visible: true,
             padding: false,
@@ -250,6 +297,8 @@ pub enum Request {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         value: Option<bool>,
     },
+    /// Choose the collapsed layout.
+    SetCollapseMode { mode: CollapseMode },
     /// Move the pill to another anchor.
     SetPosition { anchor: Anchor },
     /// Add or remove the padding around the pill. `None` toggles.
@@ -280,6 +329,7 @@ impl Request {
             Self::Remove { .. } => "remove",
             Self::Clear => "clear",
             Self::Collapse { .. } => "collapse",
+            Self::SetCollapseMode { .. } => "set-collapse-mode",
             Self::SetPosition { .. } => "set-position",
             Self::SetPadding { .. } => "set-padding",
             Self::SetVisible { .. } => "set-visible",
@@ -497,6 +547,7 @@ mod tests {
         let state = BarState {
             bars: vec![],
             collapsed: true,
+            collapse_mode: CollapseMode::Compact,
             anchor: Anchor::TopRight,
             visible: true,
             padding: true,
@@ -507,6 +558,16 @@ mod tests {
 
         let failure = WireResponse::error("no such bar");
         assert!(failure.into_data::<BarState>().is_err());
+    }
+
+    #[test]
+    fn collapse_mode_round_trips() {
+        for mode in CollapseMode::ALL {
+            assert_eq!(CollapseMode::parse(mode.id()), Some(mode));
+            assert_eq!(CollapseMode::parse(&mode.to_string()), Some(mode));
+        }
+        assert_eq!(CollapseMode::default(), CollapseMode::Normal);
+        assert_eq!(CollapseMode::parse("mini"), None);
     }
 
     #[test]

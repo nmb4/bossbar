@@ -7,7 +7,8 @@
 use std::time::{Duration, Instant};
 
 use bossbar_proto::{
-    parse_color, Anchor, BarInit, BarKind, BarPatch, BarSnapshot, BarState, BarStatus, MAX_TICKS,
+    parse_color, Anchor, BarInit, BarKind, BarPatch, BarSnapshot, BarState, BarStatus,
+    CollapseMode, MAX_TICKS,
 };
 
 /// How long a finished bar celebrates before sliding away.
@@ -82,6 +83,7 @@ pub struct BarStore {
     bars: Vec<Bar>,
     next_id: u64,
     pub collapsed: bool,
+    pub collapse_mode: CollapseMode,
     pub anchor: Anchor,
     pub visible: bool,
     /// Adds breathing room around the pill; `false` keeps it flush with the
@@ -95,6 +97,7 @@ impl Default for BarStore {
             bars: Vec::new(),
             next_id: 1,
             collapsed: false,
+            collapse_mode: CollapseMode::default(),
             anchor: Anchor::default(),
             visible: true,
             padding: false,
@@ -153,6 +156,7 @@ impl BarStore {
                 .map(Bar::snapshot)
                 .collect(),
             collapsed: self.collapsed,
+            collapse_mode: self.collapse_mode,
             anchor: self.anchor,
             visible: self.visible,
             padding: self.padding,
@@ -342,6 +346,10 @@ impl BarStore {
 
     pub fn set_anchor(&mut self, anchor: Anchor) {
         self.anchor = anchor;
+    }
+
+    pub fn set_collapse_mode(&mut self, mode: CollapseMode) {
+        self.collapse_mode = mode;
     }
 
     pub fn set_padding(&mut self, value: Option<bool>) {
@@ -654,6 +662,14 @@ mod tests {
         assert!(store.visible);
         store.set_visible(None);
         assert!(!store.visible);
+    }
+
+    #[test]
+    fn collapse_mode_defaults_to_normal_and_updates() {
+        let mut store = BarStore::default();
+        assert_eq!(store.snapshot().collapse_mode, CollapseMode::Normal);
+        store.set_collapse_mode(CollapseMode::Compact);
+        assert_eq!(store.snapshot().collapse_mode, CollapseMode::Compact);
     }
 
     #[test]

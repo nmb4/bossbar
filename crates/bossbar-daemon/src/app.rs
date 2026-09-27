@@ -5,7 +5,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use bossbar_proto::{Anchor, BarKind, BarState, Request};
+use bossbar_proto::{Anchor, BarKind, BarState, CollapseMode, Request};
 use eframe::egui::{self, ViewportCommand};
 
 use crate::{
@@ -54,6 +54,12 @@ pub struct BossBarApp {
     phase: ShowPhase,
     monitor: Option<MonitorInfo>,
     last_positioned: Option<(egui::Vec2, Anchor, bool, i32, i32)>,
+    /// Logical position last requested from the window manager.
+    requested_origin: Option<egui::Pos2>,
+    /// How far the OS pushed the window down from that request (macOS keeps
+    /// windows clear of the menu bar). Compensated by lifting the pill inside
+    /// the window so its visible top edge is flush anyway.
+    content_trim: f32,
     #[cfg(windows)]
     hwnd: Option<isize>,
     #[cfg(windows)]
@@ -93,6 +99,8 @@ impl BossBarApp {
             phase: ShowPhase::Dormant,
             monitor: None,
             last_positioned: None,
+            requested_origin: None,
+            content_trim: 0.0,
             #[cfg(windows)]
             hwnd: None,
             #[cfg(windows)]
@@ -115,6 +123,7 @@ impl BossBarApp {
             TrayAction::ToggleVisible => Request::SetVisible { value: None },
             TrayAction::ToggleCollapse => Request::Collapse { value: None },
             TrayAction::SetAnchor(anchor) => Request::SetPosition { anchor },
+            TrayAction::SetCollapseMode(mode) => Request::SetCollapseMode { mode },
             TrayAction::TogglePadding => Request::SetPadding { value: None },
             TrayAction::ClearAll => Request::Clear,
             TrayAction::Quit => Request::Shutdown,
@@ -135,14 +144,14 @@ impl BossBarApp {
             .lock()
             .map(|daemon| (daemon.store.anchor, daemon.store.padding))
             .unwrap_or_default();
-        platform::place_window(
+        self.requested_origin = Some(platform::place_window(
             ctx,
             monitor,
             anchor,
             pill_size,
             view::SHADOW_MARGIN,
             padding,
-        );
+        ));
         self.last_positioned = Some((pill_size, anchor, padding, monitor.x, monitor.y));
     }
 
@@ -174,14 +183,14 @@ impl BossBarApp {
             // Anchoring follows the pill size, not the shadow-inflated window.
             let key = (pill_size, anchor, padding, monitor.x, monitor.y);
             if self.last_positioned != Some(key) {
-                platform::place_window(
+                self.requested_origin = Some(platform::place_window(
                     ctx,
                     monitor,
                     anchor,
                     pill_size,
                     view::SHADOW_MARGIN,
                     padding,
-                );
+                ));
                 self.last_positioned = Some(key);
             }
         }
@@ -213,6 +222,19 @@ impl BossBarApp {
         }
     }
 
+    /// Compares the requested window origin with the actual one and returns
+    /// how far the pill must be lifted inside the window to stay flush.
+    fn update_content_trim(&mut self, ctx: &egui::Context) -> f32 {
+        let Some(requested) = self.requested_origin else {
+            return self.content_trim;
+        };
+        let actual = ctx.input(|input| input.viewport().outer_rect.map(|rect| rect.min));
+        if let Some(actual) = actual {
+            self.content_trim = (actual.y - requested.y).clamp(0.0, view::SHADOW_MARGIN);
+        }
+        self.content_trim
+    }
+
     fn spinner_phase(&self) -> f32 {
         (self.started.elapsed().as_secs_f32() * 0.85).fract()
     }
@@ -234,6 +256,7 @@ impl BossBarApp {
         let pill_size = self.pill_size;
         let appear = self.appear;
         let spinner_phase = self.spinner_phase();
+        let trim = self.update_content_trim(ctx);
         let mut requests: Vec<Request> = Vec::new();
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
@@ -242,6 +265,7 @@ impl BossBarApp {
                     ui,
                     model,
                     pill_size,
+                    trim,
                     appear,
                     spinner_phase,
                     &mut |request| {
@@ -363,12 +387,15 @@ impl eframe::App for BossBarApp {
             self.render(ctx, frame, &state.model);
         }
 
-        let spinner = state.model.uses_spinner() && state.model.aggregate.is_none()
-            || state
-                .model
-                .rows
-                .iter()
-                .any(|row| matches!(row.kind, BarKind::Indeterminate));
+        let indeterminate = state
+            .model
+            .rows
+            .iter()
+            .any(|row| matches!(row.kind, BarKind::Indeterminate));
+        let spinner = indeterminate
+            || (state.model.uses_collapsed_layout()
+                && state.model.collapse_mode == CollapseMode::Compact
+                && state.model.aggregate.is_none());
         let mut delay: Option<Duration> = None;
         let mut propose = |candidate: Duration| {
             delay = Some(delay.map_or(candidate, |current: Duration| current.min(candidate)));

@@ -15,7 +15,7 @@ use std::{
 use anyhow::{bail, Context as _, Result};
 use bossbar_proto::{
     daemon_info_path, Anchor, BarInit, BarKind, BarPatch, BarSnapshot, BarState, BarStatus,
-    DaemonInfo, Request, WireRequest, WireResponse, MAX_TICKS,
+    CollapseMode, DaemonInfo, Request, WireRequest, WireResponse, MAX_TICKS,
 };
 use clap::{Parser, Subcommand, ValueEnum};
 
@@ -138,10 +138,16 @@ enum Command {
     },
     /// Remove every bar.
     Clear,
-    /// Collapse the pill into one line with a progress spinner.
+    /// Collapse the pill into one line with progress spinners.
     Collapse {
         #[arg(value_enum)]
         value: Option<OnOffToggle>,
+    },
+    /// Layout used while collapsed: one ring per task (normal) or a single
+    /// shared ring (compact).
+    CollapseMode {
+        #[arg(value_enum)]
+        mode: CollapseModeArg,
     },
     /// Anchor the pill on the active screen.
     Position {
@@ -204,6 +210,21 @@ impl OnOffToggle {
             Self::On => Some(true),
             Self::Off => Some(false),
             Self::Toggle => None,
+        }
+    }
+}
+
+#[derive(Copy, Clone, Debug, ValueEnum)]
+enum CollapseModeArg {
+    Normal,
+    Compact,
+}
+
+impl From<CollapseModeArg> for CollapseMode {
+    fn from(value: CollapseModeArg) -> Self {
+        match value {
+            CollapseModeArg::Normal => CollapseMode::Normal,
+            CollapseModeArg::Compact => CollapseMode::Compact,
         }
     }
 }
@@ -369,6 +390,7 @@ fn run(cli: Cli) -> Result<i32> {
         Command::Collapse { value } => Request::Collapse {
             value: value.and_then(OnOffToggle::as_option),
         },
+        Command::CollapseMode { mode } => Request::SetCollapseMode { mode: mode.into() },
         Command::Position { anchor } => Request::SetPosition {
             anchor: anchor.into(),
         },
@@ -442,6 +464,7 @@ fn describe(request: &Request, response: &WireResponse) {
             None => println!("toggled collapse"),
         },
         Request::SetPosition { anchor } => println!("position: {anchor}"),
+        Request::SetCollapseMode { mode } => println!("collapse mode: {mode}"),
         Request::SetPadding { value } => match value {
             Some(true) => println!("padding on"),
             Some(false) => println!("padding off (flush)"),
@@ -468,9 +491,9 @@ fn print_state(state: &BarState, json: bool) -> Result<()> {
         println!("no bars");
     } else {
         let mode = if state.collapsed && state.bars.len() >= 2 {
-            "collapsed"
+            format!("collapsed ({})", state.collapse_mode)
         } else {
-            "expanded"
+            "expanded".to_owned()
         };
         println!(
             "{} bar{} · {} · {} · {}{}",
