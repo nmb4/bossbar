@@ -1,0 +1,55 @@
+[package]
+name = "bossbar-daemon"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "GUI-less background process drawing the bossbar pill overlay"
+
+[[bin]]
+name = "bossbar-daemon"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1.0.96"
+bossbar-proto = { path = "../bossbar-proto" }
+dirs = "6"
+egui = { version = "0.33.3", default-features = false }
+eframe = { version = "0.33.3", default-features = false, features = [
+    "default_fonts",
+    "accesskit",
+    "x11",
+    "wayland",
+    "wgpu",
+] }
+fs2 = "0.4.3"
+image = "0.25"
+serde_json = "1.0.138"
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.19", features = ["env-filter", "std"] }
+tray-icon = { version = "0.25.1", default-features = false }
+winit = { version = "0.30.13", default-features = false, features = ["rwh_06"] }
+xcap = "0.4"
+
+[dev-dependencies]
+egui_kittest = { version = "0.33.3", features = ["wgpu", "snapshot"] }
+
+[target.'cfg(windows)'.dependencies]
+raw-window-handle = "0.6"
+tray-icon = { version = "0.25.1", default-features = false }
+wgpu = { version = "27.0.1", default-features = false, features = ["vulkan"] }
+windows = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+tray-icon = { version = "0.25.1", default-features = false, features = ["ksni"] }
+wgpu = { version = "27.0.1", default-features = false, features = ["gles", "vulkan"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+core-graphics = "0.23"
+objc2 = "0.6"
+raw-window-handle = "0.6"
+tray-icon = { version = "0.25.1", default-features = false }
+wgpu = { version = "27.0.1", default-features = false, features = ["metal"] }

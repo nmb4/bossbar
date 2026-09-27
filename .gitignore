@@ -1,0 +1,5 @@
+/target
+.DS_Store
+crates/bossbar-daemon/tests/snapshots/*.new.png
+crates/bossbar-daemon/tests/snapshots/*.diff.png
+crates/bossbar-daemon/tests/snapshots/*.old.png
