@@ -62,8 +62,6 @@ pub struct BossBarApp {
     content_trim: f32,
     #[cfg(windows)]
     hwnd: Option<isize>,
-    #[cfg(windows)]
-    region: Option<(i32, i32)>,
     #[cfg(target_os = "macos")]
     non_activating: bool,
     last_revision: u64,
@@ -103,8 +101,6 @@ impl BossBarApp {
             content_trim: 0.0,
             #[cfg(windows)]
             hwnd: None,
-            #[cfg(windows)]
-            region: None,
             #[cfg(target_os = "macos")]
             non_activating: false,
             last_revision: 0,
@@ -168,19 +164,6 @@ impl BossBarApp {
     fn send_window_size(&mut self, ctx: &egui::Context, pill_size: egui::Vec2) {
         let window_size = pill_size + egui::Vec2::splat(view::SHADOW_MARGIN * 2.0);
         ctx.send_viewport_cmd(ViewportCommand::InnerSize(window_size));
-
-        #[cfg(windows)]
-        {
-            if let Some(hwnd) = self.hwnd {
-                platform::apply_window_region(
-                    hwnd,
-                    window_size,
-                    ctx.pixels_per_point(),
-                    view::pill_radius(pill_size),
-                    &mut self.region,
-                );
-            }
-        }
 
         let (anchor, padding) = self
             .shared

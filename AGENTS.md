@@ -81,9 +81,11 @@ cargo run -p bossbar-daemon --example window_probe   # geometry check
 - Collapsed layout has two modes (`CollapseMode::Normal` / `Compact`), both
   testable in `view.rs` snapshots. The whole pill toggles collapse on click;
   per-bar controls must keep priority (they mark the click `consumed`).
-- Windows: transparency comes from a native rounded region
-  (`platform::apply_window_region`), not per-pixel alpha. `SHADOW_MARGIN` is 0
-  there; keep the pill rect equal to the window rect.
+- Windows: the pill is composited with per-pixel alpha from the swapchain (the
+  window is transparent), which is what keeps the antialiased rounded edges
+  smooth. Do **not** add a `SetWindowRgn` shape: a 1-bit region clips the
+  alpha ramp and the pill goes jagged. `SHADOW_MARGIN` stays 0, so the pill
+  rect equals the window rect; the whole window rect is the hit area.
 - Windows: a hidden window never receives paint messages, so a repaint request
   cannot wake a parked pill — and a window parked off-screen can never be
   painted even after it is shown, which leaves the event loop spinning at

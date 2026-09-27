@@ -228,40 +228,6 @@ pub fn macos_prevent_activation(frame: &eframe::Frame) -> bool {
     true
 }
 
-/// Trims the Windows window to a rounded rectangle so the transparent surface
-/// does not need per-pixel alpha.
-#[cfg(windows)]
-pub fn apply_window_region(
-    hwnd: isize,
-    size_points: Vec2,
-    pixels_per_point: f32,
-    radius_points: f32,
-    applied: &mut Option<(i32, i32)>,
-) {
-    use windows::Win32::Foundation::HWND;
-    use windows::Win32::Graphics::Gdi::{CreateRoundRectRgn, DeleteObject, SetWindowRgn};
-
-    let width = (size_points.x * pixels_per_point).round().max(1.0) as i32;
-    let height = (size_points.y * pixels_per_point).round().max(1.0) as i32;
-    if *applied == Some((width, height)) {
-        return;
-    }
-    let diameter = (radius_points * 2.0 * pixels_per_point).round().max(2.0) as i32;
-    unsafe {
-        let region = CreateRoundRectRgn(0, 0, width + 1, height + 1, diameter, diameter);
-        if region.is_invalid() {
-            return;
-        }
-        let window = HWND(hwnd as *mut std::ffi::c_void);
-        if SetWindowRgn(window, Some(region), true) != 0 {
-            // SetWindowRgn owns the region after a successful call.
-            *applied = Some((width, height));
-        } else {
-            let _ = DeleteObject(region.into());
-        }
-    }
-}
-
 /// Shows a hidden window without activating it.
 ///
 /// Windows only delivers paint messages to visible windows, so a repaint

@@ -83,7 +83,8 @@ bossbar (CLI) ──loopback TCP + token──▶ bossbar-daemon (eframe/wgpu)
   them when finished/failed or on request.
 - On macOS the daemon runs as an accessory app (no Dock icon) and its window is
   created non-activating, so it never steals focus. On Windows the window is
-  trimmed to the pill with a native region, so no per-pixel alpha is needed.
+  trimmed to the pill and composited with per-pixel alpha, so its antialiased
+  edges and rounded corners blend into whatever is behind it.
 - Tray menu: show/hide bars, collapse/expand, collapse style, position, extra
   padding, clear all, quit. Left- and right-clicking the tray icon both open
   the menu.

@@ -41,8 +41,9 @@ const ROW_GAP: f32 = 12.0;
 const BAR_H: f32 = 5.0;
 /// Capsule radius cap; small pills use half their height instead.
 const MAX_RADIUS: f32 = 26.0;
-/// Transparent band around the pill used for the drop shadow. Windows is
-/// trimmed to the pill itself with a shaped region instead.
+/// Transparent band around the pill used for the drop shadow. Windows keeps
+/// the pill rect equal to the window rect (no shadow there); its antialiased
+/// edge comes from the swapchain's per-pixel alpha instead.
 pub const SHADOW_MARGIN: f32 = if cfg!(windows) { 0.0 } else { 10.0 };
 const SPINNER_STROKE: f32 = 2.2;
 
