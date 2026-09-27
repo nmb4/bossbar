@@ -257,6 +257,7 @@ impl BossBarApp {
                     ui,
                     model,
                     pill_size,
+                    view::SHADOW_MARGIN,
                     trim,
                     appear,
                     spinner_phase,

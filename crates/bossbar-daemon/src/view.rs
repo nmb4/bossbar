@@ -41,10 +41,13 @@ const ROW_GAP: f32 = 12.0;
 const BAR_H: f32 = 5.0;
 /// Capsule radius cap; small pills use half their height instead.
 const MAX_RADIUS: f32 = 26.0;
+/// Margin the pill's visuals (drop shadow and room for the antialiased edge)
+/// are designed around; the offscreen snapshots render with it everywhere.
+pub const DESIGN_MARGIN: f32 = 10.0;
 /// Transparent band around the pill used for the drop shadow. Windows keeps
 /// the pill rect equal to the window rect (no shadow there); its antialiased
 /// edge comes from the swapchain's per-pixel alpha instead.
-pub const SHADOW_MARGIN: f32 = if cfg!(windows) { 0.0 } else { 10.0 };
+pub const SHADOW_MARGIN: f32 = if cfg!(windows) { 0.0 } else { DESIGN_MARGIN };
 const SPINNER_STROKE: f32 = 2.2;
 
 /// Alcove-inspired dark surface.
@@ -405,19 +408,19 @@ pub fn pill_radius(pill_size: Vec2) -> f32 {
 
 // -- painting ----------------------------------------------------------------
 
-/// Draws the pill at `pill_size` inside the current UI, offset by the shadow
-/// margin (`content_trim` lifts it when the OS refused to place the window
-/// all the way at the screen top). `actions` receives requests from clicks.
+/// Draws the pill at `pill_size` inside the current UI, inset by `margin`
+/// (`content_trim` lifts it when the OS refused to place the window all the
+/// way at the screen top). `actions` receives requests from clicks.
 pub fn render_pill(
     ui: &mut egui::Ui,
     model: &UiModel,
     pill_size: Vec2,
+    margin: f32,
     content_trim: f32,
     appear: f32,
     spinner_phase: f32,
     actions: &mut dyn FnMut(Request),
 ) {
-    let margin = SHADOW_MARGIN;
     let rect = Rect::from_min_size(
         Pos2::new(margin, margin - content_trim.clamp(0.0, margin)),
         pill_size,
@@ -943,7 +946,7 @@ mod tests {
         }
 
         let mut harness = egui_kittest::Harness::builder()
-            .with_size(pill_size + Vec2::splat(SHADOW_MARGIN * 2.0))
+            .with_size(pill_size + Vec2::splat(DESIGN_MARGIN * 2.0))
             .wgpu()
             .build_state(
                 move |ctx, state: &mut (bool, UiModel, Vec2)| {
@@ -965,7 +968,16 @@ mod tests {
                                 0.0,
                                 egui::Color32::from_rgb(0x24, 0x26, 0x2b),
                             );
-                            render_pill(ui, &model, pill_size, 0.0, 1.0, 0.35, &mut |_request| {});
+                            render_pill(
+                                ui,
+                                &model,
+                                pill_size,
+                                DESIGN_MARGIN,
+                                0.0,
+                                1.0,
+                                0.35,
+                                &mut |_request| {},
+                            );
                         });
                 },
                 (false, model, pill_size),
