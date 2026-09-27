@@ -113,6 +113,9 @@ or `#rrggbb`.
 
 ## Agent usage notes
 
+`SKILL.md` is an agent-facing guide to this CLI (installable as an agent
+skill); the short version follows.
+
 - Use stable ids (`--id build`) so updates are one command.
 - `bossbar list --json` returns `{bars, collapsed, anchor, visible}`; each bar
   has `kind` (`{"type":"ticks","total":N}`), `percent`, `tick`, `status`,

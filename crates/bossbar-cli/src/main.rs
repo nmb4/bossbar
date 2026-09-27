@@ -551,12 +551,14 @@ fn wait_for(info: &DaemonInfo, id: &str, timeout: Duration, interval: Duration) 
                 };
             }
             None if Instant::now() >= deadline => {
-                bail!("no bar with id '{id}' appeared within the timeout");
+                eprintln!("bossbar: no bar with id '{id}' appeared within the timeout");
+                return Ok(2);
             }
             None => {}
         }
         if Instant::now() >= deadline {
-            bail!("timed out waiting for bar '{id}'");
+            eprintln!("bossbar: timed out waiting for bar '{id}'");
+            return Ok(2);
         }
         std::thread::sleep(interval.max(Duration::from_millis(20)));
     }

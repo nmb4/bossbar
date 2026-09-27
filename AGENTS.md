@@ -24,6 +24,7 @@ crates/bossbar-daemon/  eframe/wgpu daemon
   src/waker.rs          cross-thread repaint wakeups
   examples/window_probe.rs  prints pill window geometry (no screenshots needed)
 crates/bossbar-cli/     CLI client, auto-spawn, wait/run helpers
+SKILL.md                agent-facing usage guide; update it with CLI changes
 ```
 
 ## Build, test, verify
