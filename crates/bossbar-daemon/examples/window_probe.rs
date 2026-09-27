@@ -18,6 +18,49 @@ fn main() -> anyhow::Result<()> {
         );
     }
 
+    #[cfg(windows)]
+    {
+        use windows::Win32::Foundation::POINT;
+        use windows::Win32::Graphics::Gdi::{
+            GetMonitorInfoW, MonitorFromPoint, MONITOR_DEFAULTTONEAREST, MONITORINFO,
+        };
+        use windows::Win32::UI::WindowsAndMessaging::{
+            GetCursorPos, GetSystemMetrics, SM_CXVIRTUALSCREEN, SM_CXSCREEN,
+        };
+
+        println!("win32:");
+        let mut cursor = POINT::default();
+        unsafe { GetCursorPos(&mut cursor)? };
+        println!("  cursor: ({}, {})", cursor.x, cursor.y);
+        println!(
+            "  SM_CXSCREEN: {}  SM_CXVIRTUALSCREEN: {}",
+            unsafe { GetSystemMetrics(SM_CXSCREEN) },
+            unsafe { GetSystemMetrics(SM_CXVIRTUALSCREEN) }
+        );
+        let hmonitor = unsafe { MonitorFromPoint(cursor, MONITOR_DEFAULTTONEAREST) };
+        let mut info = MONITORINFO {
+            cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+            ..Default::default()
+        };
+        if unsafe { GetMonitorInfoW(hmonitor, &mut info) }.as_bool() {
+            println!(
+                "  MonitorFromPoint: mon={:?} work={:?}",
+                info.rcMonitor, info.rcWork
+            );
+        }
+        match xcap::Monitor::from_point(cursor.x, cursor.y) {
+            Ok(monitor) => println!(
+                "  xcap::from_point(cursor): ({}, {}) {}x{} scale={}",
+                monitor.x()?,
+                monitor.y()?,
+                monitor.width()?,
+                monitor.height()?,
+                monitor.scale_factor()?
+            ),
+            Err(error) => println!("  xcap::from_point(cursor) failed: {error}"),
+        }
+    }
+
     let mut found = false;
     for window in xcap::Window::all()? {
         let title = window.title().unwrap_or_default();

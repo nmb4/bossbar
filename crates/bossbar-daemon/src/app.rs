@@ -144,6 +144,14 @@ impl BossBarApp {
             .lock()
             .map(|daemon| (daemon.store.anchor, daemon.store.padding))
             .unwrap_or_default();
+        tracing::trace!(
+            ?monitor,
+            ?pill_size,
+            ?anchor,
+            ?padding,
+            pixels_per_point = ctx.pixels_per_point(),
+            "repositioning the pill"
+        );
         self.requested_origin = Some(platform::place_window(
             ctx,
             monitor,
@@ -183,6 +191,11 @@ impl BossBarApp {
             // Anchoring follows the pill size, not the shadow-inflated window.
             let key = (pill_size, anchor, padding, monitor.x, monitor.y);
             if self.last_positioned != Some(key) {
+                tracing::trace!(
+                    ?key,
+                    pixels_per_point = ctx.pixels_per_point(),
+                    "re-anchoring the pill"
+                );
                 self.requested_origin = Some(platform::place_window(
                     ctx,
                     monitor,
@@ -331,9 +344,14 @@ impl eframe::App for BossBarApp {
                     ctx.request_repaint();
                     tracing::debug!(?target, "pill appearing");
                 } else {
-                    // A wake may have shown the window so the event loop could
-                    // deliver this very frame (see `Waker`); with nothing to
-                    // display, park it again.
+                    // Park the window where the pill belongs before sleeping.
+                    // A hidden window that sits off-screen can never be
+                    // painted, so the next wake would be swallowed and the
+                    // event loop would spin (see `Waker`).
+                    if self.monitor.is_none() || self.last_positioned.is_none() {
+                        self.reposition(ctx, self.pill_target);
+                    }
+                    self.send_window_size(ctx, self.pill_target);
                     #[cfg(windows)]
                     if let Some(hwnd) = self.hwnd {
                         platform::hide_if_visible(hwnd);

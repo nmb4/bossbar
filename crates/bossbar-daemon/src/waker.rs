@@ -10,9 +10,10 @@ use crate::platform;
 /// The daemon parks its event loop in `ControlFlow::Wait` while nothing is
 /// animating; `wake` clears that parking by requesting a repaint. On Windows a
 /// repaint request alone cannot wake a parked pill: the system never delivers
-/// paint messages to hidden windows, so the window is shown again (without
-/// activation) first. The UI then decides on that frame whether the pill stays
-/// or the window is hidden again.
+/// paint messages to hidden windows, and it never paints a window that sits
+/// off-screen. The pill therefore parks the window at its anchor, and `wake`
+/// shows it again (without activation) before the request. The UI then decides
+/// on that frame whether the pill stays or the window is hidden again.
 #[derive(Clone, Default)]
 pub struct Waker {
     inner: Arc<WakerInner>,

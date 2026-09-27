@@ -45,6 +45,9 @@ cargo run -p bossbar-daemon --example window_probe   # geometry check
 - Wake-from-hidden smoke test (matters on Windows): with the pill on screen
   run `bossbar visible off`, wait for it to slide away, then `bossbar visible
   on` — the pill must come back on its own.
+- Parked smoke test (matters on Windows): with no bars on screen and the pill
+  hidden, run `bossbar create "X" --percent 10` — the pill must appear on the
+  first command and the daemon must stay at ~0% CPU while parked.
 - Idle behavior is part of the contract: with no bars (or a static percent
   bar) the daemon must sit at ~0% CPU. Check with `top -l 2 -pid <pid>
   -stats cpu` (the second sample). A busy loop usually means a repaint was
@@ -82,11 +85,14 @@ cargo run -p bossbar-daemon --example window_probe   # geometry check
   (`platform::apply_window_region`), not per-pixel alpha. `SHADOW_MARGIN` is 0
   there; keep the pill rect equal to the window rect.
 - Windows: a hidden window never receives paint messages, so a repaint request
-  cannot wake a parked pill. `Waker::wake` therefore shows the window without
-  activating it (`platform::show_if_hidden`), and the `Dormant` phase hides it
-  again (`platform::hide_if_visible`) when a wake found nothing to show. Don't
-  replace that with `ViewportCommand::Visible`: the pill would hide and could
-  never come back.
+  cannot wake a parked pill — and a window parked off-screen can never be
+  painted even after it is shown, which leaves the event loop spinning at
+  100% CPU with no pill on screen. The `Dormant` phase therefore keeps the
+  hidden window placed at the pill's anchor (`send_window_size`), and
+  `Waker::wake` shows it without activating it (`platform::show_if_hidden`);
+  `Dormant` hides it again (`platform::hide_if_visible`) when a wake found
+  nothing to show. Don't replace this with `ViewportCommand::Visible`: the
+  pill could hide and never come back.
 - The pill must never steal focus or activate the app. Clickable controls are
   small and local (chevron, per-row close); nothing opens windows.
 
