@@ -182,7 +182,7 @@ impl UiModel {
 
     /// True when the pill shows the collapsed layout instead of rows.
     pub fn uses_collapsed_layout(&self) -> bool {
-        self.collapsed && self.live_count >= 2
+        self.collapsed && !self.rows.is_empty()
     }
 
     /// Aggregate status color, used by the compact ring.
@@ -230,10 +230,18 @@ pub fn target_size(ctx: &egui::Context, model: &UiModel, current: Vec2) -> Vec2 
     Vec2::new(PILL_WIDTH, (PAD_Y * 2.0 + rows_height).round())
 }
 
+fn task_count_text(count: usize) -> String {
+    if count == 1 {
+        "1 task".to_owned()
+    } else {
+        format!("{count} tasks")
+    }
+}
+
 fn collapsed_size(ctx: &egui::Context, model: &UiModel) -> Vec2 {
     match model.collapse_mode {
         CollapseMode::Compact => {
-            let text = format!("{} tasks", model.live_count);
+            let text = task_count_text(model.live_count);
             let text_width = measure(ctx, &text, semibold(12.5));
             let value_width = model
                 .aggregate
@@ -266,7 +274,12 @@ fn collapsed_size(ctx: &egui::Context, model: &UiModel) -> Vec2 {
 
 /// Collapsed-normal layout: one ring per task plus an optional elided label.
 struct NormalTask {
+    /// Truncate width used when rendering the label.
     label_max: Option<f32>,
+    /// Width the label actually occupies (`0.0` when hidden); the plan width
+    /// is the exact sum of these plus rings, padding and dividers, so the
+    /// pill never reserves space its content cannot fill.
+    label_width: f32,
 }
 
 struct NormalPlan {
@@ -306,26 +319,65 @@ fn normal_plan(ctx: &egui::Context, model: &UiModel) -> NormalPlan {
             .iter()
             .map(|width| NormalTask {
                 label_max: Some(*width),
+                label_width: *width,
             })
             .collect();
-        plan.width = COLLAPSED_PAD_X * 2.0 + fixed + dividers + labels_total;
+        plan.width = COLLAPSED_PAD_X * 2.0
+            + fixed
+            + dividers
+            + plan.tasks.iter().map(|task| task.label_width).sum::<f32>();
         return plan;
     }
 
-    // Try elided labels.
-    let per_label = (budget - fixed - dividers) / tasks as f32;
-    if per_label >= 22.0 {
-        plan.tasks = (0..tasks)
-            .map(|_| NormalTask {
-                label_max: Some(per_label),
+    // Find the largest shared label cap that fits the budget: labels get as
+    // much room as the pill can offer, and the pill ends up exactly as wide
+    // as its content.
+    let elided_total = |cap: f32| -> f32 {
+        model
+            .rows
+            .iter()
+            .map(|row| measure_elided(ctx, &row.label, medium(12.0), cap))
+            .sum()
+    };
+    let mut low = 22.0_f32;
+    let mut high = label_widths.iter().cloned().fold(0.0_f32, f32::max);
+    let fits = |cap: f32| fixed + dividers + elided_total(cap) <= budget;
+    if fits(low) {
+        for _ in 0..10 {
+            let middle = (low + high) / 2.0;
+            if fits(middle) {
+                low = middle;
+            } else {
+                high = middle;
+            }
+        }
+        let cap = low;
+        let widths: Vec<f32> = model
+            .rows
+            .iter()
+            .map(|row| measure_elided(ctx, &row.label, medium(12.0), cap))
+            .collect();
+        plan.tasks = widths
+            .iter()
+            .map(|width| NormalTask {
+                label_max: Some(cap),
+                label_width: *width,
             })
             .collect();
-        plan.width = COLLAPSED_MAX_WIDTH;
+        plan.width = COLLAPSED_PAD_X * 2.0
+            + fixed
+            + dividers
+            + plan.tasks.iter().map(|task| task.label_width).sum::<f32>();
         return plan;
     }
 
     // Rings only, shrinking padding and divider gaps until it fits.
-    plan.tasks = (0..tasks).map(|_| NormalTask { label_max: None }).collect();
+    plan.tasks = (0..tasks)
+        .map(|_| NormalTask {
+            label_max: None,
+            label_width: 0.0,
+        })
+        .collect();
     loop {
         let fixed = tasks as f32 * (ring + plan.pad * 2.0);
         let dividers = (tasks.saturating_sub(1)) as f32 * (plan.divider_gap * 2.0 + 1.0);
@@ -383,7 +435,7 @@ pub fn render_pill(
         };
         painter.add(Shape::from(shadow.as_shape(rect, radius)));
     }
-    let border = if pill_response.hovered() && model.live_count >= 2 {
+    let border = if pill_response.hovered() && !model.rows.is_empty() {
         skin::LINE_HOVER
     } else {
         skin::LINE
@@ -419,7 +471,7 @@ pub fn render_pill(
     }
 
     // The whole pill toggles the collapsed layout; bar controls take priority.
-    if pill_response.clicked() && !consumed && model.live_count >= 2 {
+    if pill_response.clicked() && !consumed && !model.rows.is_empty() {
         actions(Request::Collapse { value: None });
     }
 }
@@ -598,7 +650,7 @@ fn render_collapsed_compact(
     spinner_phase: f32,
 ) {
     let center_y = rect.center().y;
-    let text = format!("{} tasks", model.live_count);
+    let text = task_count_text(model.live_count);
     let text_width = measure(_ui.ctx(), &text, semibold(12.5));
     let value = model
         .aggregate
@@ -725,6 +777,14 @@ fn render_collapsed_normal(
         }
         x += plan.pad;
     }
+}
+
+fn measure_elided(ctx: &egui::Context, text: &str, font: FontId, max_width: f32) -> f32 {
+    ctx.fonts_mut(|fonts| {
+        let mut job = egui::text::LayoutJob::simple_singleline(text.to_owned(), font, skin::TEXT);
+        job.wrap = egui::text::TextWrapping::truncate_at_width(max_width.max(1.0));
+        fonts.layout_job(job).size().x
+    })
 }
 
 fn measure(ctx: &egui::Context, text: &str, font: FontId) -> f32 {
@@ -1029,6 +1089,102 @@ mod tests {
         store.set_collapsed(Some(true));
         store.set_collapse_mode(CollapseMode::Compact);
         snapshot("collapsed-compact", &settled(&mut store));
+    }
+
+    #[test]
+    fn collapsed_normal_pill_hugs_its_content() {
+        // Three long labels: the elided layout must not reserve unused width.
+        let mut store = BarStore::default();
+        for _ in 0..3 {
+            let id = store
+                .create(None, BarInit::new("Building wire-app"))
+                .unwrap();
+            store
+                .update(
+                    &id,
+                    BarPatch {
+                        percent: Some(40.0),
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+        }
+        store.set_collapsed(Some(true));
+        let model = UiModel::collect(&settled(&mut store));
+
+        let ctx = egui::Context::default();
+        let _ = ctx.run(egui::RawInput::default(), setup_fonts);
+        let mut plan = None;
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
+            plan = Some(normal_plan(ctx, &model));
+        });
+        let plan = plan.unwrap();
+
+        let content = COLLAPSED_PAD_X * 2.0
+            + plan
+                .tasks
+                .iter()
+                .map(|task| {
+                    plan.pad * 2.0
+                        + plan.task_ring
+                        + if task.label_max.is_some() {
+                            RING_GAP + task.label_width
+                        } else {
+                            0.0
+                        }
+                })
+                .sum::<f32>()
+            + (plan.tasks.len().saturating_sub(1)) as f32 * (plan.divider_gap * 2.0 + 1.0);
+        assert!(
+            (plan.width - content).abs() < 0.5,
+            "pill width {} should hug content {}",
+            plan.width,
+            content
+        );
+        assert!(
+            plan.width <= COLLAPSED_MAX_WIDTH,
+            "plan must respect the max width"
+        );
+    }
+
+    #[test]
+    fn collapsed_three_long_labels() {
+        let mut store = BarStore::default();
+        for _ in 0..3 {
+            let id = store
+                .create(None, BarInit::new("Building wire-app"))
+                .unwrap();
+            store
+                .update(
+                    &id,
+                    BarPatch {
+                        percent: Some(40.0),
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+        }
+        store.set_collapsed(Some(true));
+        snapshot("collapsed-three-long", &settled(&mut store));
+    }
+
+    #[test]
+    fn collapsed_single_bar() {
+        let mut store = BarStore::default();
+        let id = store
+            .create(None, BarInit::new("Building wire-app"))
+            .unwrap();
+        store
+            .update(
+                &id,
+                BarPatch {
+                    percent: Some(62.0),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        store.set_collapsed(Some(true));
+        snapshot("collapsed-single", &settled(&mut store));
     }
 
     #[test]

@@ -174,9 +174,8 @@ impl TrayController {
     /// Mirrors daemon state into the checkmarks. Cheap to call every frame;
     /// only touches items whose value changed.
     pub fn sync(&self, state: &BarState) {
-        let collapse = state.collapsed && state.bars.len() >= 2;
         set_checked(&self.show_item, state.visible);
-        set_checked(&self.collapse_item, collapse);
+        set_checked(&self.collapse_item, state.collapsed);
         set_checked(&self.pos_center_item, state.anchor == Anchor::TopCenter);
         set_checked(&self.pos_right_item, state.anchor == Anchor::TopRight);
         set_checked(
