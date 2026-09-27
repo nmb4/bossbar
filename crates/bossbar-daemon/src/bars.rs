@@ -84,6 +84,9 @@ pub struct BarStore {
     pub collapsed: bool,
     pub anchor: Anchor,
     pub visible: bool,
+    /// Adds breathing room around the pill; `false` keeps it flush with the
+    /// screen bounds.
+    pub padding: bool,
 }
 
 impl Default for BarStore {
@@ -94,6 +97,7 @@ impl Default for BarStore {
             collapsed: false,
             anchor: Anchor::default(),
             visible: true,
+            padding: false,
         }
     }
 }
@@ -151,6 +155,7 @@ impl BarStore {
             collapsed: self.collapsed,
             anchor: self.anchor,
             visible: self.visible,
+            padding: self.padding,
         }
     }
 
@@ -337,6 +342,10 @@ impl BarStore {
 
     pub fn set_anchor(&mut self, anchor: Anchor) {
         self.anchor = anchor;
+    }
+
+    pub fn set_padding(&mut self, value: Option<bool>) {
+        self.padding = value.unwrap_or(!self.padding);
     }
 
     pub fn set_visible(&mut self, value: Option<bool>) {
@@ -645,6 +654,16 @@ mod tests {
         assert!(store.visible);
         store.set_visible(None);
         assert!(!store.visible);
+    }
+
+    #[test]
+    fn padding_starts_off_and_toggles() {
+        let mut store = BarStore::default();
+        assert!(!store.snapshot().padding, "no padding is the default");
+        store.set_padding(None);
+        assert!(store.padding);
+        store.set_padding(Some(false));
+        assert!(!store.padding);
     }
 
     #[test]

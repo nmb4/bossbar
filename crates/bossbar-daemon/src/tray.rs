@@ -10,7 +10,7 @@ use anyhow::{Context as _, Result};
 use bossbar_proto::{Anchor, BarState};
 use tray_icon::{
     menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem},
-    Icon, MouseButton, TrayIcon, TrayIconBuilder, TrayIconEvent,
+    Icon, TrayIcon, TrayIconBuilder,
 };
 
 use crate::waker::Waker;
@@ -19,6 +19,7 @@ const SHOW_ID: &str = "bossbar.tray.show";
 const COLLAPSE_ID: &str = "bossbar.tray.collapse";
 const POS_CENTER_ID: &str = "bossbar.tray.position.center";
 const POS_RIGHT_ID: &str = "bossbar.tray.position.right";
+const PADDING_ID: &str = "bossbar.tray.padding";
 const CLEAR_ID: &str = "bossbar.tray.clear";
 const QUIT_ID: &str = "bossbar.tray.quit";
 const TRAY_GUID: u128 = 0x7E2C_1F7A_9B44_4D19_A3E6_0C58_2B77_D9F4;
@@ -28,6 +29,7 @@ pub enum TrayAction {
     ToggleVisible,
     ToggleCollapse,
     SetAnchor(Anchor),
+    TogglePadding,
     ClearAll,
     Quit,
 }
@@ -41,6 +43,7 @@ pub struct TrayController {
     collapse_item: CheckMenuItem,
     pos_center_item: CheckMenuItem,
     pos_right_item: CheckMenuItem,
+    padding_item: CheckMenuItem,
 }
 
 impl TrayController {
@@ -72,12 +75,15 @@ impl TrayController {
             &[&pos_center_item, &pos_right_item],
         )
         .context("build tray position submenu")?;
+        let padding_item =
+            CheckMenuItem::with_id(PADDING_ID, "Extra padding", true, initial.padding, None);
         let clear_item = MenuItem::with_id(CLEAR_ID, "Clear all bars", true, None);
         let quit_item = MenuItem::with_id(QUIT_ID, "Quit bossbar", true, None);
         menu.append_items(&[
             &show_item,
             &collapse_item,
             &position_root,
+            &padding_item,
             &PredefinedMenuItem::separator(),
             &clear_item,
             &PredefinedMenuItem::separator(),
@@ -93,26 +99,11 @@ impl TrayController {
             .with_icon(icon)
             .with_icon_as_template(cfg!(target_os = "macos"))
             .with_menu(Box::new(menu))
-            .with_menu_on_left_click(false)
+            // Any click opens the menu; there is no separate click action.
+            .with_menu_on_left_click(true)
             .with_tooltip("bossbar")
             .build()
             .context("create system tray icon")?;
-
-        let icon_tx = signal_tx.clone();
-        let icon_waker = waker.clone();
-        TrayIconEvent::set_event_handler(Some(move |event| {
-            let activate = matches!(
-                event,
-                TrayIconEvent::Click {
-                    button: MouseButton::Left,
-                    ..
-                } | TrayIconEvent::DoubleClick { .. }
-            );
-            if activate {
-                let _ = icon_tx.send(TrayAction::ToggleVisible);
-                icon_waker.wake();
-            }
-        }));
 
         let menu_tx = signal_tx;
         let menu_waker = waker;
@@ -122,6 +113,7 @@ impl TrayController {
                 COLLAPSE_ID => Some(TrayAction::ToggleCollapse),
                 POS_CENTER_ID => Some(TrayAction::SetAnchor(Anchor::TopCenter)),
                 POS_RIGHT_ID => Some(TrayAction::SetAnchor(Anchor::TopRight)),
+                PADDING_ID => Some(TrayAction::TogglePadding),
                 CLEAR_ID => Some(TrayAction::ClearAll),
                 QUIT_ID => Some(TrayAction::Quit),
                 _ => None,
@@ -140,6 +132,7 @@ impl TrayController {
             collapse_item,
             pos_center_item,
             pos_right_item,
+            padding_item,
         })
     }
 
@@ -155,6 +148,7 @@ impl TrayController {
         set_checked(&self.collapse_item, collapse);
         set_checked(&self.pos_center_item, state.anchor == Anchor::TopCenter);
         set_checked(&self.pos_right_item, state.anchor == Anchor::TopRight);
+        set_checked(&self.padding_item, state.padding);
     }
 }
 

@@ -18,7 +18,9 @@ daemon you (or an agent) talk to from the CLI.
 
 - A frameless, always-on-top **pill** anchored top-center or top-right of the
   **active screen** (the monitor your cursor is on). Dark Alcove-style surface,
-  all bars and labels in one pill.
+  all bars and labels in one pill. Flush with the screen bounds by default;
+  `bossbar padding on` adds breathing room (on macOS the pill always stays
+  below the menu bar).
 - **Minecraft-style boss bars**: `--ticks 20` splits the bar into segments and
   `--tick N` advances them.
 - **Collapse toggle**: with more than one bar, squeeze the pill into a single
@@ -81,8 +83,8 @@ bossbar (CLI) ──loopback TCP + token──▶ bossbar-daemon (eframe/wgpu)
 - On macOS the daemon runs as an accessory app (no Dock icon) and its window is
   created non-activating, so it never steals focus. On Windows the window is
   trimmed to the pill with a native region, so no per-pixel alpha is needed.
-- Tray menu: show/hide bars, collapse/expand, position, clear all, quit.
-  Left-clicking the tray icon toggles visibility.
+- Tray menu: show/hide bars, collapse/expand, position, extra padding, clear
+  all, quit. Left- and right-clicking the tray icon both open the menu.
 
 ## CLI reference (short)
 
@@ -98,6 +100,7 @@ bossbar (CLI) ──loopback TCP + token──▶ bossbar-daemon (eframe/wgpu)
 | `bossbar wait <id> [--timeout 30m]` | Block until the bar disappears (exit 1 if it failed, 2 on timeout) |
 | `bossbar collapse [on\|off\|toggle]` | Collapse the pill |
 | `bossbar position <top-center\|top-right>` | Anchor on the active screen |
+| `bossbar padding [on\|off\|toggle]` | `off` (default) = flush with the screen bounds, `on` = 12 pt of breathing room |
 | `bossbar visible [on\|off\|toggle]` | Show/hide without touching bars |
 | `bossbar run [--label L] [--ticks N] [--color C] -- <cmd…>` | Run a command; one tick (or a label update) per output line |
 | `bossbar daemon <start\|stop\|restart\|status>` | Manage the daemon |

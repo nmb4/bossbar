@@ -148,6 +148,11 @@ enum Command {
         #[arg(value_enum)]
         anchor: AnchorArg,
     },
+    /// Add breathing room around the pill (off = flush with the screen bounds).
+    Padding {
+        #[arg(value_enum)]
+        value: Option<OnOffToggle>,
+    },
     /// Show or hide the pill without touching the bars.
     Visible {
         #[arg(value_enum)]
@@ -367,6 +372,9 @@ fn run(cli: Cli) -> Result<i32> {
         Command::Position { anchor } => Request::SetPosition {
             anchor: anchor.into(),
         },
+        Command::Padding { value } => Request::SetPadding {
+            value: value.and_then(OnOffToggle::as_option),
+        },
         Command::Visible { value } => Request::SetVisible {
             value: value.and_then(OnOffToggle::as_option),
         },
@@ -434,6 +442,11 @@ fn describe(request: &Request, response: &WireResponse) {
             None => println!("toggled collapse"),
         },
         Request::SetPosition { anchor } => println!("position: {anchor}"),
+        Request::SetPadding { value } => match value {
+            Some(true) => println!("padding on"),
+            Some(false) => println!("padding off (flush)"),
+            None => println!("toggled padding"),
+        },
         Request::SetVisible { value } => match value {
             Some(true) => println!("bars visible"),
             Some(false) => println!("bars hidden"),
@@ -460,12 +473,13 @@ fn print_state(state: &BarState, json: bool) -> Result<()> {
             "expanded"
         };
         println!(
-            "{} bar{} · {} · {} · {}",
+            "{} bar{} · {} · {} · {}{}",
             state.bars.len(),
             if state.bars.len() == 1 { "" } else { "s" },
             state.anchor,
             mode,
-            if state.visible { "visible" } else { "hidden" }
+            if state.visible { "visible" } else { "hidden" },
+            if state.padding { " · padded" } else { "" }
         );
         for bar in &state.bars {
             print_bar_row(bar);

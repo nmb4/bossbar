@@ -11,11 +11,10 @@
 use bossbar_proto::Anchor;
 use egui::{Pos2, Vec2, ViewportCommand};
 
-/// Distance from the very top of the monitor to the pill, in screen units.
+/// macOS keeps the pill below the menu bar even when flush.
 const MACOS_MENU_BAR_POINTS: f32 = 38.0;
-const GENERIC_TOP_MARGIN: f32 = 12.0;
-/// Distance from the right monitor edge when anchored top-right.
-const RIGHT_INSET: f32 = 12.0;
+/// Added around the pill when the padding option is enabled.
+const EXTRA_PADDING_POINTS: f32 = 12.0;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MonitorInfo {
@@ -71,16 +70,19 @@ pub fn primary_monitor() -> Option<MonitorInfo> {
 }
 
 /// Moves the window to `anchor` on `monitor` for a pill of `pill_size` points.
-pub fn place_window(ctx: &egui::Context, monitor: MonitorInfo, anchor: Anchor, pill_size: Vec2) {
-    let unit = monitor.unit_scale();
-    let width_units = pill_size.x * unit;
-    let y_units = monitor.y as f32 + top_margin_units(&monitor);
-    let x_units = match anchor {
-        Anchor::TopCenter => monitor.x as f32 + (monitor.width as f32 - width_units) / 2.0,
-        Anchor::TopRight => {
-            monitor.x as f32 + monitor.width as f32 - width_units - RIGHT_INSET * unit
-        }
-    };
+///
+/// With `padding` disabled the pill sits flush against the usable screen
+/// bounds (the very top edge on Windows/Linux, just below the menu bar on
+/// macOS); enabling it adds [`EXTRA_PADDING_POINTS`] of breathing room.
+pub fn place_window(
+    ctx: &egui::Context,
+    monitor: MonitorInfo,
+    anchor: Anchor,
+    pill_size: Vec2,
+    margin: f32,
+    padding: bool,
+) {
+    let (x_units, y_units) = window_origin_units(&monitor, anchor, pill_size, margin, padding);
 
     // winit logical positions: points on macOS, points = physical / window
     // scale factor elsewhere.
@@ -93,13 +95,51 @@ pub fn place_window(ctx: &egui::Context, monitor: MonitorInfo, anchor: Anchor, p
     ctx.send_viewport_cmd(ViewportCommand::OuterPosition(logical));
 }
 
-fn top_margin_units(monitor: &MonitorInfo) -> f32 {
+/// Window origin in monitor units for the given pill placement.
+///
+/// Anchoring is computed on the *pill*, not the window: the transparent
+/// shadow margin extends past the screen edge instead of pushing the visible
+/// surface inward. With `padding` off the pill touches the screen bound.
+fn window_origin_units(
+    monitor: &MonitorInfo,
+    anchor: Anchor,
+    pill_size: Vec2,
+    margin: f32,
+    padding: bool,
+) -> (f32, f32) {
+    let unit = monitor.unit_scale();
+    let margin_units = margin * unit;
+    let pill_left_units = match anchor {
+        Anchor::TopCenter => monitor.x as f32 + (monitor.width as f32 - pill_size.x * unit) / 2.0,
+        Anchor::TopRight => {
+            monitor.x as f32 + monitor.width as f32
+                - pill_size.x * unit
+                - side_inset_units(monitor, padding)
+        }
+    };
+    let pill_top_units = monitor.y as f32 + top_margin_units(monitor, padding);
+    (
+        pill_left_units - margin_units,
+        pill_top_units - margin_units,
+    )
+}
+
+fn top_margin_units(monitor: &MonitorInfo, padding: bool) -> f32 {
     let base = if cfg!(target_os = "macos") {
         MACOS_MENU_BAR_POINTS
     } else {
-        GENERIC_TOP_MARGIN
+        0.0
     };
-    base * monitor.unit_scale()
+    let extra = if padding { EXTRA_PADDING_POINTS } else { 0.0 };
+    (base + extra) * monitor.unit_scale()
+}
+
+fn side_inset_units(monitor: &MonitorInfo, padding: bool) -> f32 {
+    if padding {
+        EXTRA_PADDING_POINTS * monitor.unit_scale()
+    } else {
+        0.0
+    }
 }
 
 /// Cursor position in the same unit space as [`MonitorInfo`] (points on
@@ -214,5 +254,77 @@ pub fn apply_window_region(
         } else {
             let _ = DeleteObject(region.into());
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const PILL: Vec2 = Vec2::new(340.0, 50.0);
+    const MARGIN: f32 = 10.0;
+
+    fn monitor(points: bool, scale: f32) -> MonitorInfo {
+        MonitorInfo {
+            x: 0,
+            y: 0,
+            width: 1512,
+            height: 982,
+            scale,
+            points,
+        }
+    }
+
+    #[test]
+    fn flush_pill_touches_the_screen_bounds() {
+        for monitor in [monitor(true, 1.0), monitor(false, 2.0)] {
+            let unit = monitor.unit_scale();
+            // Top-right: the pill's right edge lands exactly on the bound.
+            let (x, y) = window_origin_units(&monitor, Anchor::TopRight, PILL, MARGIN, false);
+            let pill_right = x + MARGIN * unit + PILL.x * unit;
+            assert!(
+                (pill_right - monitor.width as f32).abs() < 0.01,
+                "flush right edge expected {}, got {pill_right}",
+                monitor.width
+            );
+            // Top: the pill's top edge meets the usable top bound.
+            let pill_top = y + MARGIN * unit;
+            assert!((pill_top - top_margin_units(&monitor, false)).abs() < 0.01);
+
+            // Top-center: centered either way.
+            let (cx, _) = window_origin_units(&monitor, Anchor::TopCenter, PILL, MARGIN, false);
+            let center = cx + MARGIN * unit + PILL.x * unit / 2.0;
+            assert!((center - monitor.width as f32 / 2.0).abs() < 0.01);
+        }
+    }
+
+    #[test]
+    fn padding_insets_by_exactly_the_extra_amount() {
+        let monitor = monitor(true, 2.0);
+
+        let (flush_x, flush_y) =
+            window_origin_units(&monitor, Anchor::TopRight, PILL, MARGIN, false);
+        let (padded_x, padded_y) =
+            window_origin_units(&monitor, Anchor::TopRight, PILL, MARGIN, true);
+        assert_eq!(flush_x - padded_x, EXTRA_PADDING_POINTS);
+        assert_eq!(padded_y - flush_y, EXTRA_PADDING_POINTS);
+
+        // Center stays centered; only the top edge moves down.
+        let (cx, cy) = window_origin_units(&monitor, Anchor::TopCenter, PILL, MARGIN, true);
+        let (fx, fy) = window_origin_units(&monitor, Anchor::TopCenter, PILL, MARGIN, false);
+        assert_eq!(cx, fx);
+        assert_eq!(cy - fy, EXTRA_PADDING_POINTS);
+    }
+
+    #[test]
+    fn macos_keeps_clear_of_the_menu_bar_when_flush() {
+        let macos = monitor(true, 2.0);
+        let expected = if cfg!(target_os = "macos") {
+            MACOS_MENU_BAR_POINTS
+        } else {
+            0.0
+        };
+        assert_eq!(top_margin_units(&macos, false), expected);
+        assert_eq!(side_inset_units(&macos, false), 0.0);
     }
 }

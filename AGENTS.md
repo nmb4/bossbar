@@ -64,6 +64,11 @@ cargo run -p bossbar-daemon --example window_probe   # geometry check
   daemon grabs focus from the user's active app every time a bar appears.
   Don't switch back to `eframe::run_native` without re-checking the Dock icon
   and focus behavior.
+- Placement anchors the *pill*, not the window: the transparent shadow margin
+  is allowed to extend past the screen edge so the visible surface is flush
+  when padding is off. macOS reserves the menu bar and AppKit clamps the
+  window ~5 pt lower than requested at the very top; don't "fix" that by
+  moving the pill back down.
 - Windows: transparency comes from a native rounded region
   (`platform::apply_window_region`), not per-pixel alpha. `SHADOW_MARGIN` is 0
   there; keep the pill rect equal to the window rect.

@@ -53,7 +53,7 @@ pub struct BossBarApp {
     appear: f32,
     phase: ShowPhase,
     monitor: Option<MonitorInfo>,
-    last_positioned: Option<(egui::Vec2, Anchor, i32, i32)>,
+    last_positioned: Option<(egui::Vec2, Anchor, bool, i32, i32)>,
     #[cfg(windows)]
     hwnd: Option<isize>,
     #[cfg(windows)]
@@ -115,6 +115,7 @@ impl BossBarApp {
             TrayAction::ToggleVisible => Request::SetVisible { value: None },
             TrayAction::ToggleCollapse => Request::Collapse { value: None },
             TrayAction::SetAnchor(anchor) => Request::SetPosition { anchor },
+            TrayAction::TogglePadding => Request::SetPadding { value: None },
             TrayAction::ClearAll => Request::Clear,
             TrayAction::Quit => Request::Shutdown,
         };
@@ -122,20 +123,27 @@ impl BossBarApp {
     }
 
     /// Re-resolves the monitor under the cursor and moves the pill there.
-    fn reposition(&mut self, ctx: &egui::Context, window_size: egui::Vec2) {
+    fn reposition(&mut self, ctx: &egui::Context, pill_size: egui::Vec2) {
         let monitor = platform::active_monitor().or(self.monitor);
         let Some(monitor) = monitor else {
             tracing::warn!("no monitor available to position the pill");
             return;
         };
         self.monitor = Some(monitor);
-        let anchor = self
+        let (anchor, padding) = self
             .shared
             .lock()
-            .map(|daemon| daemon.store.anchor)
+            .map(|daemon| (daemon.store.anchor, daemon.store.padding))
             .unwrap_or_default();
-        platform::place_window(ctx, monitor, anchor, window_size);
-        self.last_positioned = Some((window_size, anchor, monitor.x, monitor.y));
+        platform::place_window(
+            ctx,
+            monitor,
+            anchor,
+            pill_size,
+            view::SHADOW_MARGIN,
+            padding,
+        );
+        self.last_positioned = Some((pill_size, anchor, padding, monitor.x, monitor.y));
     }
 
     /// Applies the native window size (and Windows shape), then re-anchors if
@@ -157,15 +165,23 @@ impl BossBarApp {
             }
         }
 
-        let anchor = self
+        let (anchor, padding) = self
             .shared
             .lock()
-            .map(|daemon| daemon.store.anchor)
+            .map(|daemon| (daemon.store.anchor, daemon.store.padding))
             .unwrap_or_default();
         if let Some(monitor) = self.monitor {
-            let key = (window_size, anchor, monitor.x, monitor.y);
+            // Anchoring follows the pill size, not the shadow-inflated window.
+            let key = (pill_size, anchor, padding, monitor.x, monitor.y);
             if self.last_positioned != Some(key) {
-                platform::place_window(ctx, monitor, anchor, window_size);
+                platform::place_window(
+                    ctx,
+                    monitor,
+                    anchor,
+                    pill_size,
+                    view::SHADOW_MARGIN,
+                    padding,
+                );
                 self.last_positioned = Some(key);
             }
         }
@@ -267,8 +283,7 @@ impl eframe::App for BossBarApp {
             return;
         }
         if state.events.contains(&UiEvent::Reposition) {
-            let window_size = self.pill_target + egui::Vec2::splat(view::SHADOW_MARGIN * 2.0);
-            self.reposition(ctx, window_size);
+            self.reposition(ctx, self.pill_target);
         }
 
         let should_show = state.model.visible && !state.model.rows.is_empty();
@@ -281,8 +296,7 @@ impl eframe::App for BossBarApp {
                     self.phase = ShowPhase::Positioning;
                     self.appear = 1.0;
                     self.pill_size = target;
-                    let window_size = target + egui::Vec2::splat(view::SHADOW_MARGIN * 2.0);
-                    self.reposition(ctx, window_size);
+                    self.reposition(ctx, target);
                     self.send_window_size(ctx, target);
                     ctx.request_repaint();
                     tracing::debug!(?target, "pill appearing");
@@ -308,8 +322,7 @@ impl eframe::App for BossBarApp {
                     self.phase = ShowPhase::Positioning;
                     self.appear = 1.0;
                     self.pill_size = target;
-                    let window_size = target + egui::Vec2::splat(view::SHADOW_MARGIN * 2.0);
-                    self.reposition(ctx, window_size);
+                    self.reposition(ctx, target);
                     self.send_window_size(ctx, target);
                     ctx.request_repaint();
                 }

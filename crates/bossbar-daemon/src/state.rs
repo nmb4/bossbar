@@ -70,6 +70,11 @@ impl Daemon {
                 self.push_event(UiEvent::Reposition);
                 Ok(WireResponse::ok())
             }
+            Request::SetPadding { value } => {
+                self.store.set_padding(*value);
+                self.push_event(UiEvent::Reposition);
+                Ok(WireResponse::ok())
+            }
             Request::SetVisible { value } => {
                 let was_visible = self.store.visible;
                 self.store.set_visible(*value);
@@ -110,7 +115,7 @@ impl Daemon {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bossbar_proto::{BarInit, BarKind, BarPatch, BarState, BarStatus, Request};
+    use bossbar_proto::{Anchor, BarInit, BarKind, BarPatch, BarState, BarStatus, Request};
 
     fn create(daemon: &mut Daemon, label: &str) -> String {
         let response = daemon.apply(&Request::Create {
@@ -188,6 +193,21 @@ mod tests {
         assert!(response.ok);
         let state: BarState = daemon.apply(&Request::List).into_data().unwrap();
         assert_eq!(state.bars[0].tick, 2);
+    }
+
+    #[test]
+    fn position_and_padding_changes_request_reposition() {
+        let mut daemon = Daemon::default();
+        daemon.take_events();
+
+        daemon.apply(&Request::SetPosition {
+            anchor: Anchor::TopRight,
+        });
+        assert!(daemon.take_events().contains(&UiEvent::Reposition));
+
+        daemon.apply(&Request::SetPadding { value: Some(true) });
+        assert!(daemon.store.snapshot().padding);
+        assert!(daemon.take_events().contains(&UiEvent::Reposition));
     }
 
     #[test]

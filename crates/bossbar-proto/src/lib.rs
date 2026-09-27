@@ -185,6 +185,10 @@ pub struct BarState {
     pub collapsed: bool,
     pub anchor: Anchor,
     pub visible: bool,
+    /// `false` (default) keeps the pill flush with the screen bounds;
+    /// `true` adds breathing room around it.
+    #[serde(default)]
+    pub padding: bool,
 }
 
 impl Default for BarState {
@@ -194,6 +198,7 @@ impl Default for BarState {
             collapsed: false,
             anchor: Anchor::default(),
             visible: true,
+            padding: false,
         }
     }
 }
@@ -247,6 +252,11 @@ pub enum Request {
     },
     /// Move the pill to another anchor.
     SetPosition { anchor: Anchor },
+    /// Add or remove the padding around the pill. `None` toggles.
+    SetPadding {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        value: Option<bool>,
+    },
     /// Show or hide the pill. `None` toggles.
     SetVisible {
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -271,6 +281,7 @@ impl Request {
             Self::Clear => "clear",
             Self::Collapse { .. } => "collapse",
             Self::SetPosition { .. } => "set-position",
+            Self::SetPadding { .. } => "set-padding",
             Self::SetVisible { .. } => "set-visible",
             Self::Shutdown => "shutdown",
         }
@@ -488,6 +499,7 @@ mod tests {
             collapsed: true,
             anchor: Anchor::TopRight,
             visible: true,
+            padding: true,
         };
         let response = WireResponse::with_data(state.clone());
         let decoded: BarState = response.into_data().unwrap();
