@@ -240,10 +240,6 @@ impl BossBarApp {
     }
 
     fn render(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame, model: &UiModel) {
-        #[cfg(windows)]
-        if self.hwnd.is_none() {
-            self.hwnd = platform::window_hwnd(frame);
-        }
         #[cfg(target_os = "macos")]
         if !self.non_activating {
             self.non_activating = platform::macos_prevent_activation(frame);
@@ -292,6 +288,16 @@ impl eframe::App for BossBarApp {
             .clamp(0.0001, 0.1);
         self.last_frame = now;
 
+        // The native handle exists from the first frame on; the waker needs it
+        // early so it can make the window paintable again after a hide.
+        #[cfg(windows)]
+        if self.hwnd.is_none() {
+            self.hwnd = platform::window_hwnd(frame);
+            if let Some(hwnd) = self.hwnd {
+                self.waker.set_hwnd(hwnd);
+            }
+        }
+
         while let Some(action) = self.tray.as_ref().and_then(TrayController::try_recv) {
             self.apply_tray(action);
         }
@@ -324,6 +330,14 @@ impl eframe::App for BossBarApp {
                     self.send_window_size(ctx, target);
                     ctx.request_repaint();
                     tracing::debug!(?target, "pill appearing");
+                } else {
+                    // A wake may have shown the window so the event loop could
+                    // deliver this very frame (see `Waker`); with nothing to
+                    // display, park it again.
+                    #[cfg(windows)]
+                    if let Some(hwnd) = self.hwnd {
+                        platform::hide_if_visible(hwnd);
+                    }
                 }
             }
             ShowPhase::Positioning => {

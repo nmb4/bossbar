@@ -262,6 +262,54 @@ pub fn apply_window_region(
     }
 }
 
+/// Shows a hidden window without activating it.
+///
+/// Windows only delivers paint messages to visible windows, so a repaint
+/// request cannot wake the daemon once the pill has parked the window.
+/// Showing it is what produces the `WM_PAINT` that runs a frame; the app
+/// decides on that frame whether the pill stays or the window is hidden
+/// again. Returns `true` when the window was hidden and is now shown.
+///
+/// Raw visibility changes stay in sync with winit's cached window flags:
+/// every show is either followed by a hide on the same frame or by a
+/// `ViewportCommand::Visible(true)`, so winit only ever diffs against the
+/// real state. Keep it that way.
+#[cfg(windows)]
+pub fn show_if_hidden(hwnd: isize) -> bool {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        IsWindowVisible, ShowWindow, SW_SHOWNOACTIVATE,
+    };
+
+    let window = HWND(hwnd as *mut std::ffi::c_void);
+    unsafe {
+        if IsWindowVisible(window).as_bool() {
+            return false;
+        }
+        tracing::trace!("showing a hidden window so it can be painted");
+        let _ = ShowWindow(window, SW_SHOWNOACTIVATE);
+        true
+    }
+}
+
+/// Hides a shown window, undoing [`show_if_hidden`] when a wake found nothing
+/// to display. Returns `true` when the window was shown and is now hidden.
+#[cfg(windows)]
+pub fn hide_if_visible(hwnd: isize) -> bool {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::{IsWindowVisible, ShowWindow, SW_HIDE};
+
+    let window = HWND(hwnd as *mut std::ffi::c_void);
+    unsafe {
+        if !IsWindowVisible(window).as_bool() {
+            return false;
+        }
+        tracing::trace!("hiding the window again; nothing to show");
+        let _ = ShowWindow(window, SW_HIDE);
+        true
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

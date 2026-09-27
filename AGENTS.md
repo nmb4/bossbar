@@ -42,6 +42,9 @@ cargo run -p bossbar-daemon --example window_probe   # geometry check
 - Manual smoke test (macOS/Linux): `bossbar create "X" --percent 10`, verify
   the pill appears top-center of the monitor with the cursor, `bossbar
   collapse on` with two bars, then `bossbar daemon stop`.
+- Wake-from-hidden smoke test (matters on Windows): with the pill on screen
+  run `bossbar visible off`, wait for it to slide away, then `bossbar visible
+  on` — the pill must come back on its own.
 - Idle behavior is part of the contract: with no bars (or a static percent
   bar) the daemon must sit at ~0% CPU. Check with `top -l 2 -pid <pid>
   -stats cpu` (the second sample). A busy loop usually means a repaint was
@@ -78,6 +81,12 @@ cargo run -p bossbar-daemon --example window_probe   # geometry check
 - Windows: transparency comes from a native rounded region
   (`platform::apply_window_region`), not per-pixel alpha. `SHADOW_MARGIN` is 0
   there; keep the pill rect equal to the window rect.
+- Windows: a hidden window never receives paint messages, so a repaint request
+  cannot wake a parked pill. `Waker::wake` therefore shows the window without
+  activating it (`platform::show_if_hidden`), and the `Dormant` phase hides it
+  again (`platform::hide_if_visible`) when a wake found nothing to show. Don't
+  replace that with `ViewportCommand::Visible`: the pill would hide and could
+  never come back.
 - The pill must never steal focus or activate the app. Clickable controls are
   small and local (chevron, per-row close); nothing opens windows.
 
