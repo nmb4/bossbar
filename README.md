@@ -35,6 +35,8 @@ daemon you (or an agent) talk to from the CLI.
 
 ## Install
 
+Building the daemon requires Rust 1.95 or newer.
+
 ```bash
 cargo build --release
 # put both binaries on PATH, e.g.:
@@ -128,6 +130,28 @@ skill); the short version follows.
 - Bars are not persisted; a daemon restart clears them.
 
 ## Development
+
+For visual inspection on Windows, the justfile demos use the installed
+`bossbar` on PATH. Each stays visible for 30 seconds by default (minimum 10):
+
+```powershell
+just demo-single       # one percent bar with a detail line
+just demo-ticks        # one segmented bar
+just demo-spinner      # one indeterminate bar
+just demo-multi        # all three types, expanded
+just demo-normal       # all three types, collapsed with per-task rings
+just demo-compact      # all three types, collapsed with one shared ring
+just demo-update-label # single bar: label animation
+just demo-update-detail # single bar: detail-line animation
+just demo-update       # single bar: label, detail, and progress updates
+just demo-update-multi # all three types: text and progress updates
+just demo-multi 60     # keep the demo visible for a minute
+just demo-clean        # remove demo bars left by an interrupted run
+```
+
+Static demos hold determinate progress steady for screenshots; update demos
+change their text every three seconds. Demos remove
+their own bars and restore the previous visibility/collapse settings on exit.
 
 ```bash
 cargo test --workspace         # unit + snapshot tests

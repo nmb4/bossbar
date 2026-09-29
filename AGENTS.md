@@ -86,6 +86,9 @@ cargo run -p bossbar-daemon --example window_probe   # geometry check
   smooth. Do **not** add a `SetWindowRgn` shape: a 1-bit region clips the
   alpha ramp and the pill goes jagged. `SHADOW_MARGIN` stays 0, so the pill
   rect equals the window rect; the whole window rect is the hit area.
+  egui-winit 0.36 enables an undecorated-window shadow by default; disable it
+  with `set_undecorated_shadow(false)` before showing the root window, or DWM
+  adds a rectangular border and background around the transparent pill.
 - Windows: a hidden window never receives paint messages, so a repaint request
   cannot wake a parked pill — and a window parked off-screen can never be
   painted even after it is shown, which leaves the event loop spinning at

@@ -7,7 +7,7 @@
 //!   pill is hidden and idle.
 //!
 //! We therefore build the winit event loop ourselves and hand it to eframe.
-//! eframe 0.33 skips drawing invisible windows, but on Windows a repaint that
+//! eframe skips drawing invisible windows, but on Windows a repaint that
 //! expires after the window hides must also be parked explicitly so its
 //! temporary `ControlFlow::Poll` does not become permanent.
 

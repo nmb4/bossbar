@@ -77,6 +77,7 @@ pub struct BossBarApp {
     /// Animated pill size in points (excluding the shadow margin).
     pill_size: egui::Vec2,
     pill_target: egui::Vec2,
+    last_window_size: Option<egui::Vec2>,
     appear: f32,
     phase: ShowPhase,
     monitor: Option<MonitorInfo>,
@@ -92,10 +93,18 @@ pub struct BossBarApp {
     #[cfg(target_os = "macos")]
     non_activating: bool,
     last_revision: u64,
+    model: UiModel,
 }
 
 impl BossBarApp {
     pub fn new(cc: &eframe::CreationContext<'_>, shared: Arc<Mutex<Daemon>>, waker: Waker) -> Self {
+        #[cfg(windows)]
+        if let Some(window) = cc.winit_window() {
+            use winit::platform::windows::WindowExtWindows as _;
+            // egui-winit 0.36 enables this for every undecorated window.
+            // Its native frame/shadow surrounds our per-pixel-alpha pill.
+            window.set_undecorated_shadow(false);
+        }
         view::setup_fonts(&cc.egui_ctx);
         waker.set_context(cc.egui_ctx.clone());
         let initial = shared
@@ -120,6 +129,7 @@ impl BossBarApp {
             started: Instant::now(),
             pill_size: egui::vec2(view::INITIAL_PILL_SIZE[0], view::INITIAL_PILL_SIZE[1]),
             pill_target: egui::vec2(view::INITIAL_PILL_SIZE[0], view::INITIAL_PILL_SIZE[1]),
+            last_window_size: None,
             appear: 0.0,
             phase: ShowPhase::Dormant,
             monitor: None,
@@ -131,6 +141,7 @@ impl BossBarApp {
             #[cfg(target_os = "macos")]
             non_activating: false,
             last_revision: 0,
+            model: UiModel::collect(&BarStore::default()),
         }
     }
 
@@ -190,7 +201,12 @@ impl BossBarApp {
     /// the animated size moved the centered/right edge.
     fn send_window_size(&mut self, ctx: &egui::Context, pill_size: egui::Vec2) {
         let window_size = pill_size + egui::Vec2::splat(view::SHADOW_MARGIN * 2.0);
-        ctx.send_viewport_cmd(ViewportCommand::InnerSize(window_size));
+        // Viewport commands request a repaint, including during hidden logic
+        // passes. Sending an unchanged size would keep the parked app awake.
+        if self.last_window_size != Some(window_size) {
+            ctx.send_viewport_cmd(ViewportCommand::InnerSize(window_size));
+            self.last_window_size = Some(window_size);
+        }
 
         let (anchor, padding) = self
             .shared
@@ -262,7 +278,7 @@ impl BossBarApp {
         (self.started.elapsed().as_secs_f32() * 0.85).fract()
     }
 
-    fn render(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame, model: &UiModel) {
+    fn render(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame, model: &UiModel) {
         #[cfg(target_os = "macos")]
         if !self.non_activating {
             self.non_activating = platform::macos_prevent_activation(frame);
@@ -275,11 +291,11 @@ impl BossBarApp {
         let pill_size = self.pill_size;
         let appear = self.appear;
         let spinner_phase = self.spinner_phase();
-        let trim = self.update_content_trim(ctx);
+        let trim = self.update_content_trim(ui.ctx());
         let mut requests: Vec<Request> = Vec::new();
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
-            .show(ctx, |ui| {
+            .show(ui, |ui| {
                 view::render_pill(
                     ui,
                     model,
@@ -304,7 +320,8 @@ impl eframe::App for BossBarApp {
         [0.0, 0.0, 0.0, 0.0]
     }
 
-    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+    fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        let _ = frame;
         let now = Instant::now();
         let dt = now
             .duration_since(self.last_frame)
@@ -341,8 +358,9 @@ impl eframe::App for BossBarApp {
         }
 
         let should_show = state.model.visible && !state.model.rows.is_empty();
-        let target = view::target_size(ctx, &state.model, self.pill_size);
-        self.pill_target = target;
+        // Text measurement needs a UI pass. The UI updates this target and
+        // requests another frame when the layout changes.
+        let target = self.pill_target;
 
         match self.phase {
             ShowPhase::Dormant => {
@@ -426,11 +444,6 @@ impl eframe::App for BossBarApp {
             tracing::debug!("pill hidden; waiting for the next bar");
         }
 
-        let paintable = matches!(self.phase, ShowPhase::Visible | ShowPhase::Hiding);
-        if paintable {
-            self.render(ctx, frame, &state.model);
-        }
-
         let indeterminate = state
             .model
             .rows
@@ -457,6 +470,18 @@ impl eframe::App for BossBarApp {
             if let Some(tray) = &self.tray {
                 tray.sync(&state.snapshot);
             }
+        }
+        self.model = state.model;
+    }
+
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        let target = view::target_size(ui.ctx(), &self.model, self.pill_size);
+        if self.pill_target != target {
+            self.pill_target = target;
+            ui.ctx().request_repaint();
+        }
+        if matches!(self.phase, ShowPhase::Visible | ShowPhase::Hiding) {
+            self.render(ui, frame, &self.model.clone());
         }
     }
 }

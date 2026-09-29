@@ -1035,6 +1035,12 @@ mod tests {
 
     use super::*;
 
+    fn measure_pass(ctx: &egui::Context, measure: impl FnMut(&mut egui::Ui)) {
+        let mut output = ctx.run_ui(egui::RawInput::default(), measure);
+        // These passes only measure layout; there is no renderer to upload to.
+        output.textures_delta.clear();
+    }
+
     #[test]
     fn ui_model_uses_smoothed_progress() {
         let mut store = BarStore::default();
@@ -1064,12 +1070,13 @@ mod tests {
         // Fonts are installed on one pass and available on the next; mirror
         // what the daemon does at app creation time.
         let probe = egui::Context::default();
-        let _ = probe.run(egui::RawInput::default(), setup_fonts);
+        measure_pass(&probe, |ui| setup_fonts(ui.ctx()));
         let mut pill_size = Vec2::new(PILL_WIDTH, COLLAPSED_HEIGHT);
         {
             let model_ref = &model;
             let size_out = &mut pill_size;
-            let _ = probe.run(egui::RawInput::default(), |ctx| {
+            measure_pass(&probe, |ui| {
+                let ctx = ui.ctx();
                 *size_out = target_size(ctx, model_ref, *size_out);
             });
         }
@@ -1077,8 +1084,9 @@ mod tests {
         let mut harness = egui_kittest::Harness::builder()
             .with_size(pill_size + Vec2::splat(DESIGN_MARGIN * 2.0))
             .wgpu()
-            .build_state(
-                move |ctx, state: &mut (bool, UiModel, Vec2)| {
+            .build_ui_state(
+                move |ui, state: &mut (bool, UiModel, Vec2)| {
+                    let ctx = ui.ctx();
                     if !state.0 {
                         setup_fonts(ctx);
                         state.0 = true;
@@ -1087,9 +1095,15 @@ mod tests {
                     }
                     let model = state.1.clone();
                     let pill_size = state.2;
+                    // kittest wraps UI callbacks in an inset frame. Match the
+                    // daemon's full-viewport root so absolute pill coordinates
+                    // and the backdrop are not clipped by that test margin.
+                    let viewport = ctx.viewport_rect();
+                    let mut root = ui.new_child(egui::UiBuilder::new().max_rect(viewport));
+                    root.set_clip_rect(viewport);
                     egui::CentralPanel::default()
                         .frame(egui::Frame::NONE)
-                        .show(ctx, |ui| {
+                        .show(&mut root, |ui| {
                             // A desktop-like backdrop so the shadow and the
                             // transparent margin are visible in the PNG.
                             ui.painter().rect_filled(
@@ -1328,9 +1342,10 @@ mod tests {
         let model = UiModel::collect(&settled(&mut store));
 
         let ctx = egui::Context::default();
-        let _ = ctx.run(egui::RawInput::default(), setup_fonts);
+        measure_pass(&ctx, |ui| setup_fonts(ui.ctx()));
         let mut plan = None;
-        let _ = ctx.run(egui::RawInput::default(), |ctx| {
+        measure_pass(&ctx, |ui| {
+            let ctx = ui.ctx();
             plan = Some(normal_plan(ctx, &model));
         });
         let plan = plan.unwrap();
