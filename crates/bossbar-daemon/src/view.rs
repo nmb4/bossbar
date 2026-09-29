@@ -158,6 +158,10 @@ pub struct RowModel {
     pub label_anim: f32,
     /// Outgoing label drawn while the swap is in flight.
     pub prev_label: Option<String>,
+    /// Progress of the detail swap; `1.0` when the new detail has settled.
+    pub detail_anim: f32,
+    /// Outgoing detail drawn while the swap is in flight.
+    pub prev_detail: Option<String>,
 }
 
 #[derive(Clone)]
@@ -194,6 +198,8 @@ impl UiModel {
                 alpha: bar.alpha,
                 label_anim: bar.label_anim,
                 prev_label: bar.prev_label.clone(),
+                detail_anim: bar.detail_anim,
+                prev_detail: bar.prev_detail.clone(),
             })
             .collect();
         Self {
@@ -653,18 +659,20 @@ fn render_row(
         }
     }
 
-    if let Some(detail) = row.detail.as_deref().filter(|detail| !detail.is_empty()) {
-        let galley = elide(
+    if row
+        .detail
+        .as_deref()
+        .is_some_and(|detail| !detail.is_empty())
+    {
+        paint_row_detail(
+            painter,
             ctx,
-            detail,
-            regular(10.5),
-            tint(skin::TEXT_DIM, row_alpha),
-            row_rect.width(),
-        );
-        painter.galley(
-            Pos2::new(row_rect.left(), bar_top + BAR_H + 3.0),
-            galley,
-            tint(skin::TEXT_DIM, row_alpha),
+            row,
+            Rect::from_min_size(
+                Pos2::new(row_rect.left(), bar_top + BAR_H + 3.0),
+                Vec2::new(row_rect.width(), ROW_DETAIL_H),
+            ),
+            row_alpha,
         );
     }
 }
@@ -705,6 +713,39 @@ fn paint_row_label(
         draw(&clipped, prev, -progress * travel);
     }
     draw(&clipped, &row.label, (1.0 - progress) * travel);
+}
+
+/// Draws a row's detail line, which swaps with the same vertical conveyor as
+/// the label. A detail that is merely appearing slides in from below.
+fn paint_row_detail(
+    painter: &egui::Painter,
+    ctx: &egui::Context,
+    row: &RowModel,
+    band: Rect,
+    alpha: f32,
+) {
+    let Some(detail) = row.detail.as_deref().filter(|detail| !detail.is_empty()) else {
+        return;
+    };
+    let font = regular(10.5);
+    let color = tint(skin::TEXT_DIM, alpha);
+    let draw = |painter: &egui::Painter, text: &str, offset_y: f32| {
+        let galley = elide(ctx, text, font.clone(), color, band.width());
+        painter.galley(Pos2::new(band.left(), band.top() + offset_y), galley, color);
+    };
+
+    if row.detail_anim >= 1.0 {
+        draw(painter, detail, 0.0);
+        return;
+    }
+
+    let progress = ease_out(row.detail_anim.clamp(0.0, 1.0));
+    let travel = band.height();
+    let clipped = painter.with_clip_rect(band);
+    if let Some(prev) = row.prev_detail.as_deref() {
+        draw(&clipped, prev, -progress * travel);
+    }
+    draw(&clipped, detail, (1.0 - progress) * travel);
 }
 
 /// Fast-start, soft-landing curve for text swaps.
@@ -1132,9 +1173,46 @@ mod tests {
         // is rising from below.
         store.advance(
             Instant::now(),
-            crate::bars::LABEL_SWAP_ANIM.as_secs_f32() * 0.2,
+            crate::bars::TEXT_SWAP_ANIM.as_secs_f32() * 0.2,
         );
         snapshot("label-swap", &store);
+    }
+
+    #[test]
+    fn detail_swap_midway_between_two_details() {
+        let mut store = BarStore::default();
+        let id = store
+            .create(None, BarInit::new("Building wire-app"))
+            .unwrap();
+        store
+            .update(
+                &id,
+                BarPatch {
+                    percent: Some(47.0),
+                    detail: Some("cargo build --release · 214 crates".into()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let mut store = settled(&mut store);
+
+        store
+            .update(
+                &id,
+                BarPatch {
+                    detail: Some("linking 214 crates · 12s".into()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        // Same 20% checkpoint as the label snapshot: the seam sits near the
+        // middle of the detail line, old text leaving through the top and the
+        // new one rising from below.
+        store.advance(
+            Instant::now(),
+            crate::bars::TEXT_SWAP_ANIM.as_secs_f32() * 0.2,
+        );
+        snapshot("detail-swap", &store);
     }
 
     #[test]

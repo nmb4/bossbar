@@ -17,9 +17,9 @@ pub const DEFAULT_FINISH_HOLD: Duration = Duration::from_millis(1600);
 pub const DEFAULT_FAIL_HOLD: Duration = Duration::from_millis(4200);
 /// Exit animation length.
 pub const EXIT_ANIM: Duration = Duration::from_millis(220);
-/// Label swap animation length: the old text slides up out of its row while
-/// the new one rises from below.
-pub const LABEL_SWAP_ANIM: Duration = Duration::from_millis(260);
+/// Text swap animation length: when a label or detail changes, the old text
+/// slides up out of its line while the new one rises from below.
+pub const TEXT_SWAP_ANIM: Duration = Duration::from_millis(260);
 /// Upper bound of simultaneously live bars.
 pub const MAX_BARS: usize = 12;
 const MAX_LABEL_CHARS: usize = 80;
@@ -43,6 +43,11 @@ pub struct Bar {
     pub label_anim: f32,
     /// Label the swap is replacing; cleared once the swap settles.
     pub prev_label: Option<String>,
+    /// Progress of the detail swap, from `0.0` (started) to `1.0` (settled).
+    pub detail_anim: f32,
+    /// Detail the swap is replacing; `None` while the detail is merely
+    /// sliding in or once the swap settles.
+    pub prev_detail: Option<String>,
     pub leaving_at: Option<Instant>,
     pub hold_until: Option<Instant>,
 }
@@ -221,6 +226,8 @@ impl BarStore {
             alpha: 0.0,
             label_anim: 1.0,
             prev_label: None,
+            detail_anim: 1.0,
+            prev_detail: None,
             leaving_at: None,
             hold_until: None,
         });
@@ -244,11 +251,7 @@ impl BarStore {
         }
         if let Some(detail) = patch.detail {
             let sanitized = sanitize_text(&detail, MAX_DETAIL_CHARS, "");
-            bar.detail = if sanitized.is_empty() {
-                None
-            } else {
-                Some(sanitized)
-            };
+            set_detail(bar, (!sanitized.is_empty()).then_some(sanitized));
         }
         if let Some(kind) = patch.kind {
             bar.kind = normalize_kind(kind);
@@ -331,7 +334,8 @@ impl BarStore {
         let bar = &mut self.bars[index];
         bar.status = BarStatus::Failed;
         if let Some(message) = message {
-            bar.detail = Some(sanitize_text(&message, MAX_DETAIL_CHARS, ""));
+            let sanitized = sanitize_text(&message, MAX_DETAIL_CHARS, "");
+            set_detail(bar, (!sanitized.is_empty()).then_some(sanitized));
         }
         bar.hold_until = Some(Instant::now() + hold);
         Ok(())
@@ -387,10 +391,17 @@ impl BarStore {
             }
             let alpha_target = if bar.is_leaving() { 0.0 } else { 1.0 };
             bar.alpha += (alpha_target - bar.alpha) * follow_alpha;
+            let swap_step = dt / TEXT_SWAP_ANIM.as_secs_f32();
             if bar.label_anim < 1.0 {
-                bar.label_anim = (bar.label_anim + dt / LABEL_SWAP_ANIM.as_secs_f32()).min(1.0);
+                bar.label_anim = (bar.label_anim + swap_step).min(1.0);
                 if bar.label_anim >= 1.0 {
                     bar.prev_label = None;
+                }
+            }
+            if bar.detail_anim < 1.0 {
+                bar.detail_anim = (bar.detail_anim + swap_step).min(1.0);
+                if bar.detail_anim >= 1.0 {
+                    bar.prev_detail = None;
                 }
             }
             if bar.leaving_at.is_none() {
@@ -428,7 +439,7 @@ impl BarStore {
             if (target - bar.display).abs() > 0.001 {
                 propose(Duration::ZERO);
             }
-            if bar.label_anim < 1.0 {
+            if bar.label_anim < 1.0 || bar.detail_anim < 1.0 {
                 propose(Duration::ZERO);
             }
             if let Some(hold) = bar.hold_until {
@@ -446,6 +457,24 @@ fn normalize_kind(kind: BarKind) -> BarKind {
         },
         other => other,
     }
+}
+
+/// Replaces a bar's detail text, starting the swap animation when there is an
+/// old text to slide out. A detail that appears slides in on its own; one that
+/// is removed takes its line with it immediately.
+fn set_detail(bar: &mut Bar, next: Option<String>) {
+    if bar.detail == next {
+        return;
+    }
+    if next.is_none() {
+        bar.detail = None;
+        bar.prev_detail = None;
+        bar.detail_anim = 1.0;
+        return;
+    }
+    bar.prev_detail = bar.detail.take();
+    bar.detail = next;
+    bar.detail_anim = 0.0;
 }
 
 fn sanitize_text(value: &str, max_chars: usize, fallback: &str) -> String {
@@ -642,9 +671,9 @@ mod tests {
             Some(Duration::ZERO),
             "a swap in flight needs frames"
         );
-        store.advance(now, LABEL_SWAP_ANIM.as_secs_f32() / 2.0);
+        store.advance(now, TEXT_SWAP_ANIM.as_secs_f32() / 2.0);
         assert!(store.bars()[0].label_anim > 0.0 && store.bars()[0].label_anim < 1.0);
-        store.advance(now, LABEL_SWAP_ANIM.as_secs_f32() / 2.0 + 0.01);
+        store.advance(now, TEXT_SWAP_ANIM.as_secs_f32() / 2.0 + 0.01);
         assert_eq!(store.bars()[0].label_anim, 1.0);
         assert!(store.bars()[0].prev_label.is_none());
 
@@ -660,6 +689,67 @@ mod tests {
             .unwrap();
         assert_eq!(store.bars()[0].label_anim, 1.0);
         assert!(store.bars()[0].prev_label.is_none());
+    }
+
+    #[test]
+    fn detail_change_swaps_the_text_through_an_animation() {
+        let mut store = BarStore::default();
+        let id = store.create(None, percent_bar("build")).unwrap();
+        assert_eq!(store.bars()[0].detail_anim, 1.0);
+
+        // The first detail slides in without an outgoing text.
+        store
+            .update(
+                &id,
+                BarPatch {
+                    detail: Some("linking".into()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let bar = &store.bars()[0];
+        assert_eq!(bar.detail.as_deref(), Some("linking"));
+        assert!(bar.prev_detail.is_none());
+        assert_eq!(bar.detail_anim, 0.0);
+
+        let now = Instant::now();
+        assert_eq!(
+            store.next_repaint(now),
+            Some(Duration::ZERO),
+            "a swap in flight needs frames"
+        );
+        store.advance(now, TEXT_SWAP_ANIM.as_secs_f32() + 0.01);
+        assert_eq!(store.bars()[0].detail_anim, 1.0);
+
+        // Changing it swaps the old text out.
+        store
+            .update(
+                &id,
+                BarPatch {
+                    detail: Some("compiling".into()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let bar = &store.bars()[0];
+        assert_eq!(bar.detail.as_deref(), Some("compiling"));
+        assert_eq!(bar.prev_detail.as_deref(), Some("linking"));
+        assert_eq!(bar.detail_anim, 0.0);
+
+        // Removing the detail ends the swap without one.
+        store
+            .update(
+                &id,
+                BarPatch {
+                    detail: Some("  ".into()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let bar = &store.bars()[0];
+        assert_eq!(bar.detail, None);
+        assert!(bar.prev_detail.is_none());
+        assert_eq!(bar.detail_anim, 1.0);
     }
 
     #[test]
