@@ -17,6 +17,9 @@ pub const DEFAULT_FINISH_HOLD: Duration = Duration::from_millis(1600);
 pub const DEFAULT_FAIL_HOLD: Duration = Duration::from_millis(4200);
 /// Exit animation length.
 pub const EXIT_ANIM: Duration = Duration::from_millis(220);
+/// Label swap animation length: the old text slides up out of its row while
+/// the new one rises from below.
+pub const LABEL_SWAP_ANIM: Duration = Duration::from_millis(260);
 /// Upper bound of simultaneously live bars.
 pub const MAX_BARS: usize = 12;
 const MAX_LABEL_CHARS: usize = 80;
@@ -36,6 +39,10 @@ pub struct Bar {
     pub display: f32,
     /// Smoothed opacity, fades in on create and out on removal.
     pub alpha: f32,
+    /// Progress of the label swap, from `0.0` (started) to `1.0` (settled).
+    pub label_anim: f32,
+    /// Label the swap is replacing; cleared once the swap settles.
+    pub prev_label: Option<String>,
     pub leaving_at: Option<Instant>,
     pub hold_until: Option<Instant>,
 }
@@ -135,13 +142,14 @@ impl BarStore {
             .ok_or_else(|| format!("no bar with id '{id}'"))
     }
 
-    /// Mean fraction across determinate bars, or `None` when only
-    /// indeterminate bars are running.
-    pub fn aggregate(&self) -> Option<f32> {
+    /// Mean of the currently displayed fractions across determinate bars.
+    /// This keeps the compact collapsed ring on the same interpolation curve
+    /// as the expanded and normal-collapsed layouts.
+    pub fn display_aggregate(&self) -> Option<f32> {
         let mut sum = 0.0;
         let mut count = 0;
         for bar in self.live().filter(|bar| bar.kind.is_determinate()) {
-            sum += bar.fraction();
+            sum += bar.display.clamp(0.0, 1.0);
             count += 1;
         }
         (count > 0).then(|| sum / count as f32)
@@ -211,6 +219,8 @@ impl BarStore {
             color,
             display: 0.0,
             alpha: 0.0,
+            label_anim: 1.0,
+            prev_label: None,
             leaving_at: None,
             hold_until: None,
         });
@@ -223,7 +233,11 @@ impl BarStore {
 
         if let Some(label) = patch.label {
             let fallback = bar.label.clone();
-            bar.label = sanitize_text(&label, MAX_LABEL_CHARS, &fallback);
+            let next = sanitize_text(&label, MAX_LABEL_CHARS, &fallback);
+            if next != bar.label {
+                bar.prev_label = Some(std::mem::replace(&mut bar.label, next));
+                bar.label_anim = 0.0;
+            }
         }
         if let Some(color) = patch.color.as_deref() {
             bar.color = Some(parse_color(color).ok_or_else(|| format!("unknown color '{color}'"))?);
@@ -373,6 +387,12 @@ impl BarStore {
             }
             let alpha_target = if bar.is_leaving() { 0.0 } else { 1.0 };
             bar.alpha += (alpha_target - bar.alpha) * follow_alpha;
+            if bar.label_anim < 1.0 {
+                bar.label_anim = (bar.label_anim + dt / LABEL_SWAP_ANIM.as_secs_f32()).min(1.0);
+                if bar.label_anim >= 1.0 {
+                    bar.prev_label = None;
+                }
+            }
             if bar.leaving_at.is_none() {
                 let target = match bar.kind {
                     BarKind::Indeterminate => bar.display,
@@ -398,7 +418,7 @@ impl BarStore {
         };
         for bar in &self.bars {
             if bar.alpha < 0.995 || bar.leaving_at.is_some() {
-                propose(Duration::from_millis(16));
+                propose(Duration::ZERO);
                 continue;
             }
             let target = match bar.kind {
@@ -406,7 +426,10 @@ impl BarStore {
                 _ => bar.fraction(),
             };
             if (target - bar.display).abs() > 0.001 {
-                propose(Duration::from_millis(16));
+                propose(Duration::ZERO);
+            }
+            if bar.label_anim < 1.0 {
+                propose(Duration::ZERO);
             }
             if let Some(hold) = bar.hold_until {
                 propose(hold.saturating_duration_since(now));
@@ -594,9 +617,55 @@ mod tests {
     }
 
     #[test]
-    fn aggregate_averages_determinate_bars_only() {
+    fn label_change_swaps_the_text_through_an_animation() {
         let mut store = BarStore::default();
-        assert_eq!(store.aggregate(), None);
+        let id = store.create(None, percent_bar("first")).unwrap();
+        assert_eq!(store.bars()[0].label_anim, 1.0);
+
+        store
+            .update(
+                &id,
+                BarPatch {
+                    label: Some("second".into()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let bar = &store.bars()[0];
+        assert_eq!(bar.label, "second");
+        assert_eq!(bar.prev_label.as_deref(), Some("first"));
+        assert_eq!(bar.label_anim, 0.0);
+
+        let now = Instant::now();
+        assert_eq!(
+            store.next_repaint(now),
+            Some(Duration::ZERO),
+            "a swap in flight needs frames"
+        );
+        store.advance(now, LABEL_SWAP_ANIM.as_secs_f32() / 2.0);
+        assert!(store.bars()[0].label_anim > 0.0 && store.bars()[0].label_anim < 1.0);
+        store.advance(now, LABEL_SWAP_ANIM.as_secs_f32() / 2.0 + 0.01);
+        assert_eq!(store.bars()[0].label_anim, 1.0);
+        assert!(store.bars()[0].prev_label.is_none());
+
+        // Updating to the same (sanitized) label must not restart the swap.
+        store
+            .update(
+                &id,
+                BarPatch {
+                    label: Some("  second  ".into()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(store.bars()[0].label_anim, 1.0);
+        assert!(store.bars()[0].prev_label.is_none());
+    }
+
+    #[test]
+    fn display_aggregate_averages_determinate_bars_only() {
+        let mut store = BarStore::default();
+        assert_eq!(store.display_aggregate(), None);
 
         let a = store.create(None, percent_bar("a")).unwrap();
         let b = store
@@ -628,7 +697,16 @@ mod tests {
             )
             .unwrap();
         store.tick(&b, None, Some(1)).unwrap();
-        assert_eq!(store.aggregate(), Some(0.375));
+        assert_eq!(store.display_aggregate(), Some(0.0));
+
+        store.advance(Instant::now(), 0.016);
+        let displayed = store.display_aggregate().unwrap();
+        assert!(displayed > 0.0 && displayed < 0.375);
+
+        for _ in 0..200 {
+            store.advance(Instant::now(), 0.016);
+        }
+        assert_eq!(store.display_aggregate(), Some(0.375));
     }
 
     #[test]
@@ -711,6 +789,11 @@ mod tests {
             )
             .unwrap();
         let now = Instant::now();
+        assert_eq!(
+            store.next_repaint(now),
+            Some(Duration::ZERO),
+            "active interpolation should request the next presented frame"
+        );
         // Settle alpha and display.
         for _ in 0..200 {
             store.advance(now, 0.016);

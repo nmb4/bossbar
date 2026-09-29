@@ -84,8 +84,16 @@ fn run() -> Result<()> {
 }
 
 fn native_options() -> NativeOptions {
-    let mut options = NativeOptions::default();
-    options.renderer = eframe::Renderer::Wgpu;
+    let mut options = NativeOptions {
+        renderer: eframe::Renderer::Wgpu,
+        vsync: true,
+        ..Default::default()
+    };
+    // Repaint continuously only while something is moving and let the
+    // compositor pace those frames to the active display. Keeping this
+    // explicit prevents a dependency default from reintroducing a fixed or
+    // tearing present mode.
+    options.wgpu_options.present_mode = wgpu::PresentMode::AutoVsync;
     options.viewport = options
         .viewport
         .with_title("bossbar")
@@ -145,4 +153,19 @@ fn init_logging() {
         }
     }
     let _ = tracing_subscriber::fmt().with_env_filter(filter).try_init();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn native_renderer_is_vsync_paced() {
+        let options = native_options();
+        assert!(options.vsync);
+        assert_eq!(
+            options.wgpu_options.present_mode,
+            wgpu::PresentMode::AutoVsync
+        );
+    }
 }

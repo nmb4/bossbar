@@ -154,6 +154,10 @@ pub struct RowModel {
     pub color: Color32,
     pub display: f32,
     pub alpha: f32,
+    /// Progress of the label swap; `1.0` when the new label has settled.
+    pub label_anim: f32,
+    /// Outgoing label drawn while the swap is in flight.
+    pub prev_label: Option<String>,
 }
 
 #[derive(Clone)]
@@ -186,8 +190,10 @@ impl UiModel {
                     BarStatus::Done => skin::OK,
                     BarStatus::Failed => skin::ERR,
                 },
-                display: bar.fraction(),
+                display: bar.display,
                 alpha: bar.alpha,
+                label_anim: bar.label_anim,
+                prev_label: bar.prev_label.clone(),
             })
             .collect();
         Self {
@@ -196,7 +202,7 @@ impl UiModel {
             collapsed: store.collapsed,
             collapse_mode: store.collapse_mode,
             visible: store.visible,
-            aggregate: store.aggregate(),
+            aggregate: store.display_aggregate(),
         }
     }
 
@@ -563,17 +569,17 @@ fn render_row(
         measure(ctx, &row.value_text, medium(12.0))
     };
     let label_max_width = (row_rect.width() - value_width - 8.0 - close_width).max(24.0);
-    let galley = elide(
+    paint_row_label(
+        painter,
         ctx,
-        &row.label,
-        semibold(12.5),
-        tint(skin::TEXT, row_alpha),
+        row,
+        Rect::from_min_size(
+            Pos2::new(row_rect.left(), row_rect.top()),
+            Vec2::new(label_max_width, ROW_LABEL_H),
+        ),
+        label_center_y,
         label_max_width,
-    );
-    painter.galley(
-        Pos2::new(row_rect.left(), label_center_y - galley.size().y / 2.0),
-        galley,
-        tint(skin::TEXT, row_alpha),
+        row_alpha,
     );
 
     if !row.value_text.is_empty() {
@@ -661,6 +667,49 @@ fn render_row(
             tint(skin::TEXT_DIM, row_alpha),
         );
     }
+}
+
+/// Draws a row label inside its band. When the label just changed, the old
+/// text scrolls up out of the row while the new one rises from below.
+fn paint_row_label(
+    painter: &egui::Painter,
+    ctx: &egui::Context,
+    row: &RowModel,
+    band: Rect,
+    center_y: f32,
+    max_width: f32,
+    alpha: f32,
+) {
+    let font = semibold(12.5);
+    let color = tint(skin::TEXT, alpha);
+    let draw = |painter: &egui::Painter, text: &str, offset_y: f32| {
+        let galley = elide(ctx, text, font.clone(), color, max_width);
+        painter.galley(
+            Pos2::new(band.left(), center_y + offset_y - galley.size().y / 2.0),
+            galley,
+            color,
+        );
+    };
+
+    if row.label_anim >= 1.0 {
+        draw(painter, &row.label, 0.0);
+        return;
+    }
+
+    // One row height of travel with a soft landing; both texts move on the
+    // same curve so the swap reads as a single vertical conveyor.
+    let progress = ease_out(row.label_anim.clamp(0.0, 1.0));
+    let travel = band.height();
+    let clipped = painter.with_clip_rect(band);
+    if let Some(prev) = row.prev_label.as_deref() {
+        draw(&clipped, prev, -progress * travel);
+    }
+    draw(&clipped, &row.label, (1.0 - progress) * travel);
+}
+
+/// Fast-start, soft-landing curve for text swaps.
+fn ease_out(t: f32) -> f32 {
+    1.0 - (1.0 - t).powi(3)
 }
 
 fn render_collapsed_compact(
@@ -945,6 +994,27 @@ mod tests {
 
     use super::*;
 
+    #[test]
+    fn ui_model_uses_smoothed_progress() {
+        let mut store = BarStore::default();
+        let id = store.create(None, BarInit::new("Build")).unwrap();
+        store
+            .update(
+                &id,
+                BarPatch {
+                    percent: Some(100.0),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        store.advance(Instant::now(), 0.016);
+
+        let smoothed = store.bars()[0].display;
+        let model = UiModel::collect(&store);
+        assert_eq!(model.rows[0].display, smoothed);
+        assert!(smoothed > 0.0 && smoothed < 1.0);
+    }
+
     /// Builds a store, settles its animations, and renders it through the
     /// real layout code on a dark backdrop.
     fn snapshot(name: &str, store: &BarStore) {
@@ -1029,6 +1099,42 @@ mod tests {
             )
             .unwrap();
         snapshot("expanded-single", &settled(&mut store));
+    }
+
+    #[test]
+    fn label_swap_midway_between_two_labels() {
+        let mut store = BarStore::default();
+        let id = store
+            .create(None, BarInit::new("Building wire-app"))
+            .unwrap();
+        store
+            .update(
+                &id,
+                BarPatch {
+                    percent: Some(47.0),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let mut store = settled(&mut store);
+
+        store
+            .update(
+                &id,
+                BarPatch {
+                    label: Some("Extracting archive".into()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        // A fifth of the swap in, the easing puts the seam near the middle of
+        // the row: the old label is leaving through the top while the new one
+        // is rising from below.
+        store.advance(
+            Instant::now(),
+            crate::bars::LABEL_SWAP_ANIM.as_secs_f32() * 0.2,
+        );
+        snapshot("label-swap", &store);
     }
 
     #[test]

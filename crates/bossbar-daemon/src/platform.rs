@@ -243,9 +243,7 @@ pub fn macos_prevent_activation(frame: &eframe::Frame) -> bool {
 #[cfg(windows)]
 pub fn show_if_hidden(hwnd: isize) -> bool {
     use windows::Win32::Foundation::HWND;
-    use windows::Win32::UI::WindowsAndMessaging::{
-        IsWindowVisible, ShowWindow, SW_SHOWNOACTIVATE,
-    };
+    use windows::Win32::UI::WindowsAndMessaging::{IsWindowVisible, ShowWindow, SW_SHOWNOACTIVATE};
 
     let window = HWND(hwnd as *mut std::ffi::c_void);
     unsafe {

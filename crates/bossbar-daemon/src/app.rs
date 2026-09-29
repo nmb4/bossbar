@@ -17,10 +17,6 @@ use crate::{
     waker::Waker,
 };
 
-/// Cadence for indeterminate motion (sheen, spinner ring). 20 fps keeps the
-/// idle daemon cheap while still reading as motion.
-const SPINNER_FRAME: Duration = Duration::from_millis(50);
-
 struct FrameState {
     model: UiModel,
     snapshot: BarState,
@@ -39,6 +35,37 @@ enum ShowPhase {
     Visible,
     /// Fading out before hiding again.
     Hiding,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Repaint {
+    Now,
+    After(Duration),
+}
+
+fn repaint_request(
+    phase: ShowPhase,
+    animating: bool,
+    store_delay: Option<Duration>,
+    spinner: bool,
+) -> Option<Repaint> {
+    // A hidden Windows window never receives the redraw requested when this
+    // timer expires. eframe switches the event loop to `ControlFlow::Poll`
+    // before asking the window to redraw, so that missed redraw would leave
+    // the daemon spinning indefinitely. Dormant/positioning phases are woken
+    // explicitly instead and must not retain a repaint deadline.
+    if !matches!(phase, ShowPhase::Visible | ShowPhase::Hiding) {
+        return None;
+    }
+
+    // Immediate repaints are paced by wgpu's VSync present mode. A zero store
+    // delay means the bar model is actively interpolating; positive delays
+    // are hold deadlines that should leave the event loop parked meanwhile.
+    if animating || spinner || store_delay == Some(Duration::ZERO) {
+        Some(Repaint::Now)
+    } else {
+        store_delay.map(Repaint::After)
+    }
 }
 
 pub struct BossBarApp {
@@ -399,7 +426,8 @@ impl eframe::App for BossBarApp {
             tracing::debug!("pill hidden; waiting for the next bar");
         }
 
-        if visible {
+        let paintable = matches!(self.phase, ShowPhase::Visible | ShowPhase::Hiding);
+        if paintable {
             self.render(ctx, frame, &state.model);
         }
 
@@ -412,22 +440,16 @@ impl eframe::App for BossBarApp {
             || (state.model.uses_collapsed_layout()
                 && state.model.collapse_mode == CollapseMode::Compact
                 && state.model.aggregate.is_none());
-        let mut delay: Option<Duration> = None;
-        let mut propose = |candidate: Duration| {
-            delay = Some(delay.map_or(candidate, |current: Duration| current.min(candidate)));
-        };
-        if animating {
-            propose(Duration::from_millis(16));
-        }
-        if let Some(store_delay) = state.next_repaint {
-            propose(store_delay.max(Duration::from_millis(16)));
-        }
-        if spinner && visible {
-            propose(SPINNER_FRAME);
-        }
-        if let Some(delay) = delay {
-            tracing::trace!(?delay, "scheduling repaint");
-            ctx.request_repaint_after(delay);
+        match repaint_request(self.phase, animating, state.next_repaint, spinner) {
+            Some(Repaint::Now) => {
+                tracing::trace!("requesting VSync-paced repaint");
+                ctx.request_repaint();
+            }
+            Some(Repaint::After(delay)) => {
+                tracing::trace!(?delay, "scheduling repaint deadline");
+                ctx.request_repaint_after(delay);
+            }
+            None => {}
         }
 
         if state.revision != self.last_revision {
@@ -436,5 +458,62 @@ impl eframe::App for BossBarApp {
                 tray.sync(&state.snapshot);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dormant_window_never_retains_a_repaint_deadline() {
+        assert_eq!(
+            repaint_request(
+                ShowPhase::Dormant,
+                true,
+                Some(Duration::from_millis(1)),
+                true,
+            ),
+            None
+        );
+        assert_eq!(
+            repaint_request(
+                ShowPhase::Positioning,
+                true,
+                Some(Duration::from_millis(1)),
+                true,
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn visible_motion_repaints_immediately_for_vsync_pacing() {
+        assert_eq!(
+            repaint_request(
+                ShowPhase::Visible,
+                false,
+                Some(Duration::from_millis(200)),
+                true,
+            ),
+            Some(Repaint::Now)
+        );
+        assert_eq!(
+            repaint_request(ShowPhase::Hiding, true, None, false),
+            Some(Repaint::Now)
+        );
+        assert_eq!(
+            repaint_request(ShowPhase::Visible, false, Some(Duration::ZERO), false,),
+            Some(Repaint::Now)
+        );
+    }
+
+    #[test]
+    fn visible_hold_uses_a_delayed_repaint() {
+        let hold = Duration::from_millis(200);
+        assert_eq!(
+            repaint_request(ShowPhase::Visible, false, Some(hold), false),
+            Some(Repaint::After(hold))
+        );
     }
 }
